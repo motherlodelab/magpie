@@ -390,7 +390,7 @@ func fetchURL(ctx context.Context, vf vertical.Fetcher, rawURL, render string, o
 	// Actions force the browser path: their whole point is DOM interaction
 	// a static fetch cannot honor (ValidateOptions rejected static).
 	if render == "browser" || len(o.Actions) > 0 || len(o.CaptureXHR) > 0 {
-		return fetchBrowser(ctx, rawURL, o)
+		return fetchBrowserChecked(ctx, rawURL, o)
 	}
 	// A4 pass-through: every status reaches Clean+Classify so blocked pages
 	// get typed quality errors instead of "fetch: HTTP %d".
@@ -401,11 +401,12 @@ func fetchURL(ctx context.Context, vf vertical.Fetcher, rawURL, render string, o
 		// callers asked for no browser and get the typed error directly.
 		var ce *fetch.ChallengeError
 		if render != "static" && errors.As(err, &ce) {
-			bresp, berr := fetchBrowser(ctx, rawURL, o)
-			if berr == nil && fetch.DetectChallenge(bresp.HTML, bresp.Headers, bresp.StatusCode) == "" {
+			bresp, berr := fetchBrowserChecked(ctx, rawURL, o)
+			if berr == nil {
 				return bresp, nil
 			}
-			// Typed error stays primary — launch noise must never mask the vendor.
+			// Header-authoritative static detection wins over the
+			// browser-side vendor, and launch noise never masks it.
 			return nil, ce
 		}
 		return nil, err
@@ -455,6 +456,24 @@ func screenshotPage(ctx context.Context, rawURL, viewport string, actions []stri
 		return rod.Screenshot(ctx, rawURL, w, h)
 	}
 	return rod.ScreenshotActions(ctx, rawURL, w, h, acts)
+}
+
+func fetchBrowserChecked(ctx context.Context, rawURL string, o Options) (*fetch.FetchResponse, error) {
+	resp, err := fetchBrowser(ctx, rawURL, o)
+	if err != nil {
+		return nil, err
+	}
+	// A challenge that survives the browser is still a challenge: type it
+	// instead of shipping the interstitial DOM to cleaning (which reads it
+	// as an empty page and reports the misleading "quality blocked (empty)").
+	vendor := fetch.DetectChallenge(resp.HTML, resp.Headers, resp.StatusCode)
+	if vendor == "" {
+		vendor = fetch.DetectChallengeRendered(resp.HTML)
+	}
+	if vendor != "" {
+		return nil, &fetch.ChallengeError{Vendor: vendor, StatusCode: resp.StatusCode, URL: rawURL}
+	}
+	return resp, nil
 }
 
 func fetchBrowser(ctx context.Context, rawURL string, o Options) (*fetch.FetchResponse, error) {

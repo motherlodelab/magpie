@@ -108,3 +108,34 @@ func TestChallengeError_Message(t *testing.T) {
 		t.Errorf("message = %q, want %q", e.Error(), want)
 	}
 }
+
+func TestDetectChallengeRendered_UpworkInterstitial(t *testing.T) {
+	// Probe-derived shape (2026-09-20): Upwork's shell survives rod as a
+	// 200 DOM, ~345KB, carrying the live script identifiers and vendor UI.
+	body := []byte(`<html><title>Just a moment...</title><script>var cf_chl_opt={"r":"a3"}</script>` +
+		`<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script>` +
+		strings.Repeat("<p>filler</p>", 6000) + `<div>Cloudflare Ray ID: a3df</div></html>`)
+	if v := fetch.DetectChallengeRendered(body); v != "cloudflare" {
+		t.Errorf("DetectChallengeRendered = %q, want cloudflare", v)
+	}
+}
+
+func TestDetectChallengeRendered_ArticleNoFalsePositive(t *testing.T) {
+	// A large article ABOUT anti-bot vendors mentions the words but never
+	// embeds the live script identifiers next to the vendor UI string.
+	var b strings.Builder
+	b.WriteString("<html><title>Solving captchas with cloudflare tools</title><body>")
+	for b.Len() < 20*1024 {
+		b.WriteString("<p>Discusses turnstile widgets and the ray id header in theory.</p>")
+	}
+	b.WriteString("</body></html>")
+	if v := fetch.DetectChallengeRendered([]byte(b.String())); v != "" {
+		t.Errorf("DetectChallengeRendered = %q, want empty for legit article", v)
+	}
+}
+
+func TestDetectChallengeRendered_Empty(t *testing.T) {
+	if v := fetch.DetectChallengeRendered(nil); v != "" {
+		t.Errorf("empty body = %q, want empty", v)
+	}
+}

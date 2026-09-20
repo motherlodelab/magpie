@@ -49,7 +49,7 @@ var challengeBodySignatures = []struct {
 // DetectChallenge returns the bot-protection vendor for a response, or
 // "". The cf-mitigated header is authoritative regardless of body size;
 // body signatures only fire under the thin-page gate (same contract as
-// IsChallengePage — status classification stays there, not here).
+// IsChallengePage - status classification stays there, not here).
 func DetectChallenge(body []byte, headers http.Header, status int) string {
 	if headers.Get("cf-mitigated") != "" {
 		return "cloudflare"
@@ -59,6 +59,44 @@ func DetectChallenge(body []byte, headers http.Header, status int) string {
 	}
 	lower := strings.ToLower(string(body))
 	for _, sig := range challengeBodySignatures {
+		ok := true
+		for _, m := range sig.markers {
+			if !strings.Contains(lower, m) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return sig.vendor
+		}
+	}
+	return ""
+}
+
+// renderedChallengeSignatures classifies browser-rendered interstitials.
+// No thin-page gate here: a challenge that survives rod escalation is a
+// full 200 DOM (Upwork's serialized shell is ~345KB), so the static
+// path's size gate would skip every marker. The pairs are stricter than
+// the static signatures instead - a live interstitial embeds its own
+// script identifiers alongside vendor UI strings, and an article ABOUT a
+// vendor almost never carries both at once.
+var renderedChallengeSignatures = []struct {
+	vendor  string
+	markers []string
+}{
+	{vendor: "cloudflare", markers: []string{"cf_chl", "turnstile"}},
+	{vendor: "cloudflare", markers: []string{"_cf_chl_opt", "ray id"}},
+}
+
+// DetectChallengeRendered classifies a browser-rendered DOM (rod output):
+// same typed-vendor contract as DetectChallenge, minus the thin-page
+// gate, plus stricter marker pairs.
+func DetectChallengeRendered(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	lower := strings.ToLower(string(body))
+	for _, sig := range renderedChallengeSignatures {
 		ok := true
 		for _, m := range sig.markers {
 			if !strings.Contains(lower, m) {
