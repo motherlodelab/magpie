@@ -242,6 +242,62 @@ func TestFetchJSON_Vectors(t *testing.T) {
 	})
 }
 
+// TestRegister covers the embedder seam (placed after the exact-set
+// tests above: registry appends are global, so those must see the
+// unpolluted built-in list; only the UA test below follows and it never
+// touches the registry).
+func TestRegister(t *testing.T) {
+	fake := vertical.Extractor{
+		Info:  vertical.Info{Name: "zz_test_fake", Label: "Fake", Desc: "test-only", Patterns: []string{"https://fake.test/x"}},
+		Match: func(u *url.URL) bool { return u.Host == "fake.test" },
+		Extract: func(_ context.Context, _ vertical.Fetcher, _ *url.URL) (map[string]any, error) {
+			return map[string]any{"ok": true}, nil
+		},
+	}
+	if err := vertical.Register(fake); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if _, ok := vertical.Lookup("zz_test_fake"); !ok {
+		t.Fatal("Lookup(zz_test_fake) = false, want true")
+	}
+	found := false
+	for _, info := range vertical.List() {
+		if info.Name == "zz_test_fake" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("List() missing registered extractor")
+	}
+	if err := vertical.Register(fake); err == nil || !strings.Contains(err.Error(), "already registered") {
+		t.Errorf("duplicate Register err = %v, want already-registered", err)
+	}
+	for name, mutate := range map[string]func(*vertical.Extractor){
+		"empty name":  func(e *vertical.Extractor) { e.Info.Name = "" },
+		"nil Match":   func(e *vertical.Extractor) { e.Match = nil },
+		"nil Extract": func(e *vertical.Extractor) { e.Extract = nil },
+	} {
+		bad := fake
+		bad.Info.Name = "zz_test_bad"
+		mutate(&bad)
+		if err := vertical.Register(bad); err == nil {
+			t.Errorf("Register(%s) = nil error, want validation failure", name)
+		}
+	}
+	// A registered OptIn extractor stays explicit-only: a permissive
+	// matcher must never make MatchURL fire it.
+	adopt := fake
+	adopt.Info.Name = "zz_test_optin"
+	adopt.OptIn = true
+	adopt.Match = func(u *url.URL) bool { return true } // permissive on purpose
+	if err := vertical.Register(adopt); err != nil {
+		t.Fatalf("Register(optin): %v", err)
+	}
+	if ex, ok := vertical.MatchURL("https://example.com/anything"); ok {
+		t.Errorf("MatchURL fired %s — registered OptIn must stay explicit-only", ex.Info.Name)
+	}
+}
+
 // TestStaticFetcher_UserAgent is the ONE real-client test: a recording
 // httptest server (localhost, allowed) asserts the StaticFetcher sends the
 // User-Agent that crates.io policy requires. UA value from fetch/http.go:25.

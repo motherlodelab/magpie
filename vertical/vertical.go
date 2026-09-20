@@ -46,11 +46,27 @@ type Extractor struct {
 	OptIn   bool // true = explicit-only, skipped by MatchURL
 }
 
-// registry is the frozen 10-extractor set (constructors live per-file).
+// registry is the extractor set: built-ins self-register via init();
+// embedders add more via Register. Writes happen at startup, before any
+// serving — no mutex.
 var registry []Extractor
 
 func register(e Extractor) {
 	registry = append(registry, e)
+}
+
+// Register adds a custom extractor to the registry (exported for
+// embedders — the desktop app registers proprietary verticals at
+// startup). Duplicate names are rejected: Lookup is name-addressed.
+func Register(e Extractor) error {
+	if e.Info.Name == "" || e.Match == nil || e.Extract == nil {
+		return fmt.Errorf("vertical: register: Name, Match and Extract are required")
+	}
+	if _, exists := Lookup(e.Info.Name); exists {
+		return fmt.Errorf("vertical: extractor %q already registered", e.Info.Name)
+	}
+	registry = append(registry, e)
+	return nil
 }
 
 // List returns every extractor's Info, registry order.
