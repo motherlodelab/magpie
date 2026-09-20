@@ -625,6 +625,7 @@ Claude Desktop config (`{ "mcpServers": { "magpie": {
 | `brand` | Brand colors, fonts, logo, favicon (zero LLM) |
 | `list_extractors` | List zero-LLM vertical extractors |
 | `vertical_scrape` | Extract one URL with a named vertical (zero LLM) |
+| `search` | Search the web via BYOK/no-key SERP providers, optionally scrape the top hits |
 
 HTTP mode: `magpie serve --transport http --addr 127.0.0.1:8089`.
 Details: `magpie serve --help`.
