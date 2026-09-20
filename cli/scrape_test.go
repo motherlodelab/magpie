@@ -28,6 +28,12 @@ type fakeProvider struct {
 
 func newFakeProvider(t *testing.T, script ...string) (*httptest.Server, *fakeProvider) {
 	t.Helper()
+	// Hermetic by contract: ambient MAGPIE_* env (real endpoints/keys)
+	// must never redirect the fake provider's adapter.
+	t.Setenv("MAGPIE_BASE_URL", "")
+	t.Setenv("MAGPIE_OPENAI_API_KEY", "")
+	t.Setenv("MAGPIE_ANTHROPIC_API_KEY", "")
+	t.Setenv("MAGPIE_OLLAMA_URL", "")
 	fp := &fakeProvider{t: t, script: script}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, rerr := io.ReadAll(r.Body)
