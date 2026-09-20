@@ -90,9 +90,8 @@ var renderedChallengeSignatures = []struct {
 
 // DetectChallengeRendered classifies a browser-rendered DOM (rod output):
 // same typed-vendor contract as DetectChallenge, minus the thin-page
-// gate, plus stricter marker pairs. status is informational.
-func DetectChallengeRendered(body []byte, status int) string {
-	_ = status
+// gate, plus stricter marker pairs.
+func DetectChallengeRendered(body []byte) string {
 	if len(body) == 0 {
 		return ""
 	}

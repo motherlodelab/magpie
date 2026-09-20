@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
@@ -108,12 +109,7 @@ func upworkMeta(doc *goquery.Document, name string) string {
 // upworkTrimBrand drops the site suffix from og:title ("Job title |
 // Upwork" style) when present.
 func upworkTrimBrand(s string) string {
-	for _, suffix := range []string{" | Upwork", " | Up Work"} {
-		if i := strings.LastIndex(s, suffix); i >= 0 {
-			return strings.TrimSpace(s[:i])
-		}
-	}
-	return strings.TrimSpace(s)
+	return strings.TrimSpace(strings.TrimSuffix(s, " | Upwork"))
 }
 
 // upworkFindJob walks a decoded state tree depth-first for the first map
@@ -130,15 +126,23 @@ func upworkFindJob(v any, depth int) map[string]any {
 	if _, has := m["ciphertext"]; has {
 		return m
 	}
-	for _, k := range []string{"job", "jobProfile", "posting", "vacancy", "data"} {
+	for _, k := range []string{"job", "jobProfile", "posting", "vacancy"} {
 		if child, exists := m[k]; exists {
 			if hit := upworkFindJob(child, depth+1); hit != nil {
 				return hit
 			}
 		}
 	}
-	for _, v := range m {
-		if hit := upworkFindJob(v, depth+1); hit != nil {
+	// Remaining keys in sorted order: map range is randomized, and a page
+	// embedding two job-shaped maps (job + "similar jobs") must not make
+	// the output vary run to run.
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if hit := upworkFindJob(m[k], depth+1); hit != nil {
 			return hit
 		}
 	}
@@ -161,16 +165,6 @@ func upworkMergeJob(rec map[string]any, job map[string]any) {
 	set("budget")
 	set("category")
 	set("postedAt")
-	if rec["title"] == nil {
-		if v, ok := job["title"].(string); ok && strings.TrimSpace(v) != "" {
-			rec["title"] = strings.TrimSpace(v)
-		}
-	}
-	if rec["description"] == nil {
-		if v, ok := job["description"].(string); ok && strings.TrimSpace(v) != "" {
-			rec["description"] = strings.TrimSpace(v)
-		}
-	}
 	if skills, ok := job["skills"].([]any); ok && len(skills) > 0 {
 		out := make([]string, 0, len(skills))
 		for _, sk := range skills {
