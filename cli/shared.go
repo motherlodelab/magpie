@@ -17,13 +17,15 @@ import (
 	"github.com/motherlodelab/magpie/store"
 )
 
-// ProviderHelp is the single home for the --provider value list, shared by
-// every command so help text can't drift per-command.
-const ProviderHelp = "anthropic|openai|ollama|openrouter|codex|opencode-go|opencode-zen"
+// ProviderHelp is the --provider value list, derived from the one home
+// for the provider set (extract.Providers) so help text can't drift from
+// what BuildExtractor accepts.
+var ProviderHelp = strings.Join(extract.ProviderNames(), "|")
 
-// newExtractor builds the provider adapter with run-logging attached.
-// One home for the provider switch so scrape and extract can't drift apart.
-// Unknown providers error loudly — a typo must never silently bill Anthropic.
+// newExtractor builds the provider adapter with run-logging attached —
+// a thin wrapper over extract.BuildExtractor (the one home for the
+// provider switch) that owns the llm_calls log closure and the usage
+// exit code for unknown providers.
 func newExtractor(provider, key, model string, sch *extract.Schema, db *store.DB, runID string) (extract.Extractor, error) {
 	// Normalize once: adapters log this id into llm_calls, so raw flag
 	// casing must never fork the accounting.
@@ -37,57 +39,11 @@ func newExtractor(provider, key, model string, sch *extract.Schema, db *store.DB
 			fmt.Fprintf(os.Stderr, "warning: log llm call: %v\n", err)
 		}
 	}
-	switch provider {
-	case "openai", "ollama":
-		a := extract.NewOpenAI("", key, model, sch)
-		a.Log = log
-		return a, nil
-	case "anthropic":
-		a := extract.NewAnthropic("", key, model, sch)
-		a.Log = log
-		return a, nil
-	case "openrouter":
-		a := extract.NewOpenAI("https://openrouter.ai/api/v1", key, model, sch)
-		a.Provider = provider
-		a.Log = log
-		a.ExtraHeaders = map[string]string{
-			"HTTP-Referer": "https://github.com/you/magpie",
-			"X-Title":      "magpie",
-		}
-		// Hard schema routing: without require_parameters OpenRouter may
-		// route to an upstream that treats the schema as a hint.
-		a.BodyExtra = map[string]any{"provider": map[string]any{"require_parameters": true}}
-		return a, nil
-	case "opencode-go", "opencode-zen":
-		return newZenExtractor(provider, key, model, sch, log, runID)
-	case "codex":
-		a := extract.NewCodexExec(model, sch, log)
-		if err := a.Preflight(); err != nil {
-			return nil, err
-		}
-		return a, nil
-	default:
-		return nil, fail(2, "unknown provider %q (want %s)", provider, ProviderHelp)
+	ex, err := extract.BuildExtractor(provider, key, model, runID, sch, log)
+	if errors.Is(err, extract.ErrUnknownProvider) {
+		return nil, fail(2, "%v", err)
 	}
-}
-
-// newZenExtractor builds the OpenCode Go/Zen adapter: base URL per billing
-// (flat plan vs pay-as-you-go credits), adapter per model prefix, session +
-// UA headers on every call.
-func newZenExtractor(provider, key, model string, sch *extract.Schema, log func(string, extract.TokenUsage), runID string) (extract.Extractor, error) {
-	base := "https://opencode.ai/zen/v1"
-	if provider == "opencode-go" {
-		base = "https://opencode.ai/zen/go/v1"
-	}
-	headers := map[string]string{"User-Agent": extract.MagpieUA}
-	if extract.ZenUsesMessages(model) {
-		a := extract.NewAnthropic(base, key, model, sch)
-		a.Provider, a.SessionID, a.ExtraHeaders, a.Log = provider, runID, headers, log
-		return a, nil
-	}
-	a := extract.NewOpenAI(base, key, model, sch)
-	a.Provider, a.SessionID, a.ExtraHeaders, a.Log = provider, runID, headers, log
-	return a, nil
+	return ex, err
 }
 
 // openCmdDB opens the cache DB from resolved config. Called after all
