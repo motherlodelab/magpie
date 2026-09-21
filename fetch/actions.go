@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -165,10 +166,40 @@ func (r *RodFetcher) FetchWithActions(ctx context.Context, req FetchRequest, act
 	return resp, nil
 }
 
+// cookieParams parses a raw Cookie header value ("a=b; c=d") into CDP
+// cookie params scoped to the URL's host with Path "/" — the browser
+// path's counterpart to the static fetch's verbatim Cookie header
+// (M0b: --cookies used to be static-only, so a JS-rendered login wall
+// saw a logged-out page). Malformed pairs (no "=") are skipped: the
+// static path passes garbage through for the origin to judge, and
+// Chromium would drop attribute-less junk anyway. ponytail: no
+// cookie-attribute grammar (Secure/SameSite/…) — the raw header form
+// is name=value only; a cookie jar API is the upgrade path.
+func cookieParams(rawURL, rawCookies string) []*proto.NetworkCookieParam {
+	host := ""
+	if u, err := url.Parse(rawURL); err == nil {
+		host = strings.ToLower(u.Hostname()) // cookie domains are case-insensitive; normalize once
+	}
+	var out []*proto.NetworkCookieParam
+	for _, part := range strings.Split(rawCookies, ";") {
+		name, value, ok := strings.Cut(part, "=")
+		name = strings.TrimSpace(name)
+		if !ok || name == "" {
+			continue
+		}
+		out = append(out, &proto.NetworkCookieParam{
+			Name: name, Value: strings.TrimSpace(value), Domain: host, Path: "/",
+		})
+	}
+	return out
+}
+
 // openPage creates the page, optionally sets the lang header, subscribes
 // XHR capture (between creation and navigation — early responses must be
 // seen), then navigates. One create-then-navigate shape for both lang
 // paths: the blank-page round trip is sub-ms next to the fixed 2s settle.
+// Run cookies are injected pre-navigation (CDP), so the document request
+// itself carries them.
 func (r *RodFetcher) openPage(cctx context.Context, req FetchRequest, caps *xhrCollector) (*rod.Page, error) {
 	page, err := r.browser.Context(cctx).Page(proto.TargetCreateTarget{})
 	if err != nil {
@@ -178,6 +209,12 @@ func (r *RodFetcher) openPage(cctx context.Context, req FetchRequest, caps *xhrC
 		if _, err := page.SetExtraHeaders([]string{"Accept-Language", req.Lang}); err != nil {
 			_ = page.Close() //nolint:errcheck // error path; teardown failure unactionable
 			return nil, fmt.Errorf("fetch: set lang header: %w", err)
+		}
+	}
+	if params := cookieParams(req.URL, req.Cookies); len(params) > 0 {
+		if err := page.SetCookies(params); err != nil {
+			_ = page.Close() //nolint:errcheck // error path; teardown failure unactionable
+			return nil, fmt.Errorf("fetch: set cookies: %w", err)
 		}
 	}
 	if caps != nil {

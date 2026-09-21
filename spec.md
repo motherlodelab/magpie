@@ -94,6 +94,7 @@ var DefaultHTTPClient = &http.Client{
 - **Compression:** leave `DisableCompression: false` so the transport advertises gzip and auto-decodes.
 - **Realistic headers:** ship a small rotating set of current desktop browser header bundles (User-Agent, Accept, Accept-Language `fr-FR,fr;q=0.9,en;q=0.8` for the Amazon.fr consumer, Accept-Encoding, Sec-CH-UA client hints, Sec-Fetch-* set). Default UA identifies the bot (see §11) unless the user opts into a browser UA.
 - **Run-supplied headers (M0):** `fetch.FetchRequest.Headers []string` / `scrape.Options.Headers []string` — raw `"Name: value"` lines applied on the static path after the profile bundle, Lang, and cookies, so the caller wins same-name conflicts. Shape and control characters are rejected pre-I/O at the options boundary (`ValidateOptions` → `OptionsError`, exit 2 — CRLF in a header line is header injection); `Authorization: Bearer …` passes. CLI `--header` (repeatable), MCP `headers []string`. Static path only — the rod path does not inject run headers.
+- **Browser cookie injection (M0):** `--cookies` is no longer static-only — before `page.Navigate`, the rod path parses `FetchRequest.Cookies` (`"a=b; c=d"`) into CDP `NetworkSetCookie` params scoped to the URL's host with `Path: /`, so the document request itself carries them (a JS-rendered login wall no longer sees a logged-out page). Injection happens per navigation in `openPage` — the cookie persists in that browser session's jar (fresh browser per scrape run, so runs stay isolated); host scoping is the browser jar's.
 
 ---
 
