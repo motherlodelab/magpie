@@ -192,6 +192,15 @@ func (p *pool) reportFailure(idx int) {
 // transport field: the static client is shared, the override is per run.
 type requestProxyKey struct{}
 
+// requestProxyFrom extracts the per-request proxy override from a
+// context (nil when absent). Consulted by proxyFunc AND the dial guard:
+// when set, the dialed peer IS the operator-chosen proxy — the same
+// trusted-egress decision a pool entry gets.
+func requestProxyFrom(ctx context.Context) *url.URL {
+	u, _ := ctx.Value(requestProxyKey{}).(*url.URL)
+	return u
+}
+
 // ValidateRequestProxy parses a per-run proxy (FetchRequest.Proxy /
 // scrape.Options.Proxy / crawl.Options.Proxy): pool-line grammar
 // (http|https|socks5|socks5h URL, or host:port:user:pass). Typed

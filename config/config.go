@@ -96,9 +96,10 @@ func DefaultModel(provider string) string {
 // The file round-trips through yaml.Node so the operator's comments and
 // unknown keys survive — a GUI writing this shared file must never
 // clobber hand-edits. Missing or empty file → node built from
-// DefaultConfig(), then mutated. Only fields with explicit node support
-// are persisted (extract_provider and model today); a mutate that sets
-// other fields silently drops them — extend per caller, no generic
+// DefaultConfig(), then mutated; a comments-only file is refused (the
+// notes cannot round-trip into a mapping). Only fields with explicit
+// node support are persisted (extract_provider and model today); a
+// mutate that sets other fields silently drops them — extend per caller, no generic
 // field-mapping layer until a second caller needs one. A mutate error
 // (or a parse failure) aborts before any write: the file stays
 // byte-identical.
@@ -107,14 +108,23 @@ func Save(path string, mutate func(*Config) error) error {
 		mutate = func(*Config) error { return nil }
 	}
 	doc := &yaml.Node{}
+	var existing []byte
 	if data, err := os.ReadFile(path); err == nil {
+		existing = data
 		if err := yaml.Unmarshal(data, doc); err != nil {
 			return fmt.Errorf("config: parse %s: %w", path, err)
 		}
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("config: read %s: %w", path, err)
 	}
-	if doc.Kind == 0 { // missing or empty file → defaults as the base
+	if doc.Kind == 0 {
+		if len(strings.TrimSpace(string(existing))) > 0 {
+			// Comments/whitespace only: the operator's notes are content
+			// we cannot round-trip into a mapping — refuse rather than
+			// silently replace the file with defaults.
+			return fmt.Errorf("config: %s holds no configuration keys (comments only); add the keys by hand", path)
+		}
+		// Missing or truly empty file → defaults as the base.
 		def := DefaultConfig()
 		if err := doc.Encode(&def); err != nil {
 			return fmt.Errorf("config: encode defaults: %w", err)

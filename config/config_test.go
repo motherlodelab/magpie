@@ -286,6 +286,23 @@ func TestSaveUnparseableExisting(t *testing.T) {
 	}
 }
 
+// TestSaveCommentsOnlyRefused: a comments-only file parses to no
+// document — the notes are content Save cannot round-trip, so it must
+// refuse instead of silently replacing the file with defaults.
+func TestSaveCommentsOnlyRefused(t *testing.T) {
+	dir := isolatedXDG(t)
+	path := writeInitial(t, dir, "# operator's notes, no keys yet\n")
+	before := mustRead(t, path)
+
+	err := config.Save(path, func(c *config.Config) error { c.ExtractProvider = "openai"; return nil })
+	if err == nil || !strings.Contains(err.Error(), "no configuration keys") {
+		t.Fatalf("err = %v, want the comments-only refusal", err)
+	}
+	if got := mustRead(t, path); got != before {
+		t.Errorf("refused save must not touch the file:\nbefore=%q after=%q", before, got)
+	}
+}
+
 func TestConfigShow_HasPhase3Keys(t *testing.T) {
 	isolatedXDG(t)
 	cfg, err := config.Load(filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "magpie", "config.yaml"))

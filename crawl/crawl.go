@@ -239,6 +239,12 @@ func (c *crawlContext) begin() error {
 		}
 	}
 
+	// ponytail: the robots Checker rides the env pool, not opts.Proxy —
+	// threading the per-run override needs an exported fetch ctx helper.
+	// Known gap: a proxy-only site mislabels its egress failure as a
+	// robots refusal (checker.Allowed err → ErrRobotsBlocked). Documented
+	// in CORE-HANDOFF §1; revisit if a caller actually sets per-run
+	// proxy on crawls (desktop L-phase or a CLI --proxy flag).
 	c.checker = NewChecker()
 	c.limiters = NewHostLimiters(c.opts.Rate, 3)
 	if c.opts.AutoThrottle {
