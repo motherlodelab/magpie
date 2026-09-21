@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -156,6 +157,132 @@ func TestServeKeys_OverlayChain(t *testing.T) {
 	})
 	if cfg.ServeTransport != "stdio" || cfg.ServeAddr != "127.0.0.1:1111" || cfg.ExporterCmd != "other" {
 		t.Errorf("flag overlay = %+v, want stdio/127.0.0.1:1111/other", cfg)
+	}
+}
+
+// writeInitial seeds a config file and returns its path.
+func writeInitial(t *testing.T, dir, body string) string {
+	t.Helper()
+	path := filepath.Join(dir, "magpie", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func mustRead(t *testing.T, path string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+// TestSavePreservesUnknownsAndComments: Save mutates ONLY the known
+// fields it is asked to — the operator's hand-edits (comments, unknown
+// keys) are contract, not collateral. The shared config.yaml is
+// hand-editable by design; a GUI save that reorders or drops it is the
+// exact clobber this function exists to prevent.
+func TestSavePreservesUnknownsAndComments(t *testing.T) {
+	dir := isolatedXDG(t)
+	path := writeInitial(t, dir, `# magpie config — hand-tuned
+extract_provider: openai
+model: old-model
+# my scoring tweak, leave alone
+custom_tuning: {a: 1, b: [2, 3]}
+`)
+
+	err := config.Save(path, func(c *config.Config) error {
+		c.ExtractProvider = "anthropic"
+		c.Model = "claude-sonnet-5"
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := mustRead(t, path)
+	for _, want := range []string{
+		"# magpie config — hand-tuned",    // header comment survives
+		"# my scoring tweak, leave alone", // inline comment survives
+		"custom_tuning",                   // unknown key survives
+		"a: 1",                            // unknown key's content survives
+		"extract_provider: anthropic",     // known field mutated
+		"model: claude-sonnet-5",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("after Save, file lost %q\nfile:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "old-model") {
+		t.Errorf("old value not replaced:\n%s", s)
+	}
+}
+
+// TestSaveCreatesMissing: no file yet → Save creates it from defaults,
+// then applies the mutation.
+func TestSaveCreatesMissing(t *testing.T) {
+	dir := isolatedXDG(t)
+	path := filepath.Join(dir, "magpie", "config.yaml")
+
+	if err := config.Save(path, func(c *config.Config) error {
+		c.ExtractProvider = "openai"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := mustRead(t, path)
+	for _, want := range []string{"extract_provider: openai", "render: auto", "format: json"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("fresh Save missing %q\nfile:\n%s", want, s)
+		}
+	}
+	// The created file must Load back cleanly.
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load created file: %v", err)
+	}
+	if cfg.ExtractProvider != "openai" {
+		t.Errorf("Load round-trip provider = %q, want openai", cfg.ExtractProvider)
+	}
+}
+
+// TestSaveMutateErrorLeavesFile: a mutate error aborts before any
+// write — the file stays byte-identical.
+func TestSaveMutateErrorLeavesFile(t *testing.T) {
+	dir := isolatedXDG(t)
+	path := writeInitial(t, dir, "extract_provider: openai\n")
+	before := mustRead(t, path)
+
+	err := config.Save(path, func(c *config.Config) error {
+		return errors.New("forced")
+	})
+	if err == nil {
+		t.Fatal("mutate error must propagate")
+	}
+	if got := mustRead(t, path); got != before {
+		t.Errorf("failed mutate must not touch the file:\nbefore=%q after=%q", before, got)
+	}
+}
+
+// TestSaveUnparseableExisting: garbage in the file → loud error, file
+// untouched (never truncated to "fix" itself).
+func TestSaveUnparseableExisting(t *testing.T) {
+	dir := isolatedXDG(t)
+	path := writeInitial(t, dir, "broken: [yaml\n  ::nope\n")
+	before := mustRead(t, path)
+
+	err := config.Save(path, func(c *config.Config) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "parse") {
+		t.Fatalf("err = %v, want parse failure", err)
+	}
+	if got := mustRead(t, path); got != before {
+		t.Errorf("failed parse must not touch the file:\nbefore=%q after=%q", before, got)
 	}
 }
 

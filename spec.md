@@ -595,6 +595,8 @@ CREATE TABLE IF NOT EXISTS llm_calls (
 
 **Decision: single YAML config file, with precedence flags > env > file > built-in defaults.** File at `%APPDATA%\magpie\config.yaml` (Windows) / `$XDG_CONFIG_HOME/magpie/config.yaml`. Env vars prefixed `MAGPIE_` (e.g. `MAGPIE_EXTRACT_PROVIDER=anthropic`). Every config key has a corresponding flag.
 
+**Writes:** `config.Save(path, mutate func(*Config) error)` (Phase K.7) round-trips the file through `yaml.Node` — comments and unknown keys survive a save, so a GUI (or future CLI `config set`) can persist `extract_provider`/`model` without clobbering hand-edits. Missing/empty file is created from `DefaultConfig()`; a mutate or parse error leaves the file byte-identical. Only fields with explicit node support are persisted — extend per caller, no generic field-mapping layer.
+
 ### 9.4 API-key handling on Windows
 
 **Decision: zalando/go-keyring (v0.2.8, released Mar 23 2026).** One cross-platform API that maps to **Windows Credential Manager**, macOS Keychain, and Linux Secret Service; its `keyring_windows.go` calls `wincred.GetGenericCredential(...)`, so on Windows you get danieljoos/wincred's native Credential Manager behavior with no per-OS code (it stores under a `service:username` target name). Keys are stored under service `magpie`, username = provider. Precedence for reading a key: explicit flag > `MAGPIE_<PROVIDER>_API_KEY` env > OS keyring > config file (discouraged; if used, warn and require file perms 0600). Never log keys. Caveat: on headless Linux/CI the Secret Service may be absent — fall back to env var there (the standard CI pattern). Drop to wincred directly only if you go Windows-only. `magpie config set-key anthropic` prompts and stores into the keyring.

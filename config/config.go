@@ -92,6 +92,84 @@ func DefaultModel(provider string) string {
 	}
 }
 
+// Save applies mutate to the config file at path and writes it back.
+// The file round-trips through yaml.Node so the operator's comments and
+// unknown keys survive — a GUI writing this shared file must never
+// clobber hand-edits. Missing or empty file → node built from
+// DefaultConfig(), then mutated. Only fields with explicit node support
+// are persisted (extract_provider and model today); a mutate that sets
+// other fields silently drops them — extend per caller, no generic
+// field-mapping layer until a second caller needs one. A mutate error
+// (or a parse failure) aborts before any write: the file stays
+// byte-identical.
+func Save(path string, mutate func(*Config) error) error {
+	if mutate == nil {
+		mutate = func(*Config) error { return nil }
+	}
+	doc := &yaml.Node{}
+	if data, err := os.ReadFile(path); err == nil {
+		if err := yaml.Unmarshal(data, doc); err != nil {
+			return fmt.Errorf("config: parse %s: %w", path, err)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("config: read %s: %w", path, err)
+	}
+	if doc.Kind == 0 { // missing or empty file → defaults as the base
+		def := DefaultConfig()
+		if err := doc.Encode(&def); err != nil {
+			return fmt.Errorf("config: encode defaults: %w", err)
+		}
+	}
+	root := doc
+	if root.Kind == yaml.DocumentNode {
+		if len(root.Content) == 0 {
+			return fmt.Errorf("config: %s: empty document", path)
+		}
+		root = root.Content[0]
+	}
+	if root.Kind != yaml.MappingNode {
+		return fmt.Errorf("config: %s: top level must be a mapping (got kind %v)", path, root.Kind)
+	}
+	cfg := Config{}
+	if err := root.Decode(&cfg); err != nil {
+		return fmt.Errorf("config: decode %s: %w", path, err)
+	}
+	if err := mutate(&cfg); err != nil {
+		return fmt.Errorf("config: save %s: %w", path, err)
+	}
+	setMappingKey(root, "extract_provider", cfg.ExtractProvider)
+	setMappingKey(root, "model", cfg.Model)
+	out, err := yaml.Marshal(doc)
+	if err != nil {
+		return fmt.Errorf("config: encode %s: %w", path, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("config: mkdir %s: %w", filepath.Dir(path), err)
+	}
+	// 0600 only applies to fresh files (WriteFile keeps existing modes) —
+	// matches Load's group/world-readable warning threshold.
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		return fmt.Errorf("config: write %s: %w", path, err)
+	}
+	return nil
+}
+
+// setMappingKey sets key to the scalar string val in a mapping node,
+// appending the pair when absent. Existing comments on the key and its
+// value nodes are kept (only Value/Tag/Kind are touched).
+func setMappingKey(m *yaml.Node, key, val string) {
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			v := m.Content[i+1]
+			v.Kind, v.Tag, v.Value, v.Style = yaml.ScalarNode, "!!str", val, 0
+			return
+		}
+	}
+	m.Content = append(m.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Value: key},
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: val})
+}
+
 // Load reads file (if present) then overlays MAGPIE_ env vars.
 func Load(path string) (Config, error) {
 	cfg := DefaultConfig()
