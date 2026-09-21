@@ -6,6 +6,7 @@ package fetch_test
 
 import (
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/motherlodelab/magpie/crawl"
 	"github.com/motherlodelab/magpie/fetch"
@@ -357,5 +359,40 @@ func TestProxy_BadScheme(t *testing.T) {
 	}
 	if n := originHits.Load(); n != 0 {
 		t.Errorf("origin hits = %d, want 0 (bad proxy config must fail pre-I/O)", n)
+	}
+}
+
+// TestWithRequestProxy_RoutesGuardedClient — the exported ctx helper is
+// how bespoke clients (crawl's robots Checker) ride the per-run proxy:
+// a plain guarded-transport request whose ctx carries the override
+// routes through it, and the dial guard trusts the loopback proxy peer
+// (strict options, public target — no AllowPrivate anywhere).
+func TestWithRequestProxy_RoutesGuardedClient(t *testing.T) {
+	var originHits atomic.Int64
+	origin := hitOrigin(t, &originHits, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("User-agent: *\nAllow: /")) //nolint:errcheck // test server
+	})
+	socks, conns, _ := fakeSOCKS5(t, mustURL(t, origin.URL))
+	t.Setenv("MAGPIE_PROXY", "")
+	t.Setenv("MAGPIE_PROXY_FILE", "")
+	t.Setenv("NO_PROXY", "")
+
+	client := &http.Client{Timeout: 10 * time.Second, Transport: fetch.GuardedTransportWithOptions(fetch.SSRFOptions{})}
+	u, err := fetch.ValidateRequestProxy(socks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequestWithContext(fetch.WithRequestProxy(t.Context(), u), http.MethodGet, "http://93.184.216.34/robots.txt", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("guarded client with ctx override: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body) //nolint:errcheck // test drain
+	_ = resp.Body.Close()                 //nolint:errcheck // test teardown
+	if n := conns.Load(); n != 1 {
+		t.Errorf("socks conns = %d, want 1 (the ctx override must route the request)", n)
 	}
 }

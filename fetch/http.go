@@ -307,7 +307,7 @@ func (s *StaticFetcher) do(ctx context.Context, req FetchRequest) (*FetchRespons
 		if perr != nil {
 			return nil, perr
 		}
-		cctx = context.WithValue(cctx, requestProxyKey{}, u)
+		cctx = WithRequestProxy(cctx, u)
 	}
 	hreq, err := http.NewRequestWithContext(cctx, http.MethodGet, req.URL, nil)
 	if err != nil {

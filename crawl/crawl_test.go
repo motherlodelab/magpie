@@ -1433,12 +1433,13 @@ func TestCrawl_CorpusAutoThrottle(t *testing.T) {
 	}
 }
 
-// TestCrawl_ProxyThreadsToFetch — Batch B: Options.Proxy reaches every
-// page fetch. A dead loopback proxy must fail all pages (the option
-// rode the request); the identical crawl without it succeeds. The SOCKS
-// fake is fetch-test-internal (no forking), so the dead-port pin proves
-// the threading both ways. Runs under -race: PR #22's crawl ctx fix
-// must not regress on this path.
+// TestCrawl_ProxyThreadsToFetch — Batch B + F4 fix: Options.Proxy is the
+// WHOLE crawl's egress. Through a dead proxy the seed robots check dies
+// on the proxy first (ErrRobotsBlocked, conservative RFC 9309 deny —
+// loud and early, before any page fetch); the identical crawl without
+// Proxy succeeds. The SOCKS fake is fetch-test-internal (no forking),
+// so the dead-port pin proves the threading both ways. Runs under
+// -race: PR #22's crawl ctx fix must not regress on this path.
 func TestCrawl_ProxyThreadsToFetch(t *testing.T) {
 	o := newSiteOrigin(t, map[string]string{"/": itemPage()}, "")
 	base := func() Options {
@@ -1452,19 +1453,58 @@ func TestCrawl_ProxyThreadsToFetch(t *testing.T) {
 	}
 	withDeadProxy := base()
 	withDeadProxy.Proxy = "http://127.0.0.1:1"
-	res, err := Run(context.Background(), withDeadProxy)
-	if err != nil {
-		t.Fatalf("crawl with dead proxy: %v (page failures are outcomes, not run errors)", err)
-	}
-	if res.PagesOK != 0 || res.PagesErr != 1 {
-		t.Errorf("pages ok/err = %d/%d, want 0/1 (fetches must ride the per-run proxy)", res.PagesOK, res.PagesErr)
+	_, err := Run(context.Background(), withDeadProxy)
+	if err == nil || !errors.Is(err, ErrRobotsBlocked) {
+		t.Fatalf("crawl with dead proxy: err = %v, want ErrRobotsBlocked (the robots fetch rode the per-run proxy)", err)
 	}
 
-	res, err = Run(context.Background(), base())
+	res, err := Run(context.Background(), base())
 	if err != nil {
 		t.Fatalf("crawl without Proxy: %v", err)
 	}
 	if res.PagesOK != 1 || res.PagesErr != 0 {
 		t.Errorf("pages ok/err = %d/%d, want 1/0", res.PagesOK, res.PagesErr)
+	}
+}
+
+// TestChecker_RidesPerRunProxy — the F4 fix: robots.txt fetches honor
+// the per-run egress. Direct origin + no proxy → allowed; the same
+// origin through a dead proxy → the robots fetch dies on the proxy and
+// the conservative RFC 9309 unreachable-deny applies. No proxy fake
+// needed: the dead port distinguishes the routes.
+func TestChecker_RidesPerRunProxy(t *testing.T) {
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("User-agent: *\nAllow: /")) //nolint:errcheck // httptest local
+	}))
+	t.Cleanup(origin.Close)
+
+	c := NewChecker()
+	allowed, err := c.Allowed(context.Background(), origin.URL+"/x")
+	if err != nil || !allowed {
+		t.Fatalf("no proxy: allowed=%v err=%v, want allowed (direct robots fetch)", allowed, err)
+	}
+
+	dead, err := url.Parse("http://127.0.0.1:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c2 := NewChecker()
+	c2.UseProxy(dead)
+	_, err = c2.Allowed(context.Background(), origin.URL+"/x")
+	if err == nil || !errors.Is(err, ErrRobotsUnreachable) {
+		t.Fatalf("dead proxy: err=%v, want ErrRobotsUnreachable (robots fetch rode the proxy)", err)
+	}
+}
+
+// TestCrawl_BadProxyPreIO — crawl.Options.Proxy is validated before any
+// I/O (typed ErrProxyConfig; the CLI maps it to exit 2 via root).
+func TestCrawl_BadProxyPreIO(t *testing.T) {
+	_, err := Run(context.Background(), Options{
+		SeedURL: "http://127.0.0.1:1/", Corpus: true, Format: "jsonl",
+		Out: filepath.Join(t.TempDir(), "c.jsonl"), DB: openCrawlDB(t),
+		Proxy: "ftp://p.example:3128",
+	})
+	if err == nil || !errors.Is(err, fetch.ErrProxyConfig) {
+		t.Fatalf("err = %v, want ErrProxyConfig pre-I/O", err)
 	}
 }

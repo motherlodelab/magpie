@@ -130,6 +130,9 @@ type crawlContext struct {
 	gate       *core.BrowserGate
 	frontier   *Frontier
 	static     *fetch.StaticFetcher
+	// proxy is the validated per-run egress (opts.Proxy), wired into
+	// the checker at begin(); nil when unset.
+	proxy *url.URL
 
 	outstanding atomic.Int64
 
@@ -179,7 +182,18 @@ func newCrawlContext(opts Options) (*crawlContext, error) {
 	if err := ValidateCorpus(opts.Corpus, opts.Format); err != nil {
 		return nil, err
 	}
-	cc := &crawlContext{db: opts.DB, opts: opts}
+	// Per-run egress validated once, pre-I/O (typed ErrProxyConfig) —
+	// page fetches read opts.Proxy on their FetchRequests, the robots
+	// checker gets the parsed URL at begin().
+	var proxy *url.URL
+	if opts.Proxy != "" {
+		u, err := fetch.ValidateRequestProxy(opts.Proxy)
+		if err != nil {
+			return nil, err
+		}
+		proxy = u
+	}
+	cc := &crawlContext{db: opts.DB, opts: opts, proxy: proxy}
 	cc.maxPages = opts.MaxPages
 	if cc.maxPages <= 0 {
 		cc.maxPages = 100
@@ -239,13 +253,11 @@ func (c *crawlContext) begin() error {
 		}
 	}
 
-	// ponytail: the robots Checker rides the env pool, not opts.Proxy —
-	// threading the per-run override needs an exported fetch ctx helper.
-	// Known gap: a proxy-only site mislabels its egress failure as a
-	// robots refusal (checker.Allowed err → ErrRobotsBlocked). Documented
-	// in CORE-HANDOFF §1; revisit if a caller actually sets per-run
-	// proxy on crawls (desktop L-phase or a CLI --proxy flag).
 	c.checker = NewChecker()
+	// Validated in newCrawlContext (pre-I/O); robots fetches ride the
+	// per-run egress so a proxy-only site's politeness check uses the
+	// same route as its page fetches. One crawl, one egress story.
+	c.checker.UseProxy(c.proxy)
 	c.limiters = NewHostLimiters(c.opts.Rate, 3)
 	if c.opts.AutoThrottle {
 		c.limiters.SetAuto()

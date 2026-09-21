@@ -27,6 +27,10 @@ type Checker struct {
 	mu     sync.Mutex
 	bodies map[string]robotsEntry
 	token  string // bare product token, e.g. "magpie"
+	// proxy is the per-run egress override (crawl.Options.Proxy,
+	// validated): robots fetches ride it so a proxy-only site's politeness
+	// check uses the same egress as its page fetches. nil = env pool.
+	proxy *url.URL
 }
 
 type robotsEntry struct {
@@ -48,6 +52,12 @@ func NewChecker() *Checker {
 		token:  "magpie",
 	}
 }
+
+// UseProxy routes robots.txt fetches through u (a validated per-run
+// proxy from fetch.ValidateRequestProxy). Call at construction, before
+// the first Allowed/CrawlDelay/Sitemaps — bodies are cached per run,
+// so a later swap would only affect hosts not yet loaded.
+func (c *Checker) UseProxy(u *url.URL) { c.proxy = u }
 
 // delayHandler collects Crawl-Delay for groups matching * or our token.
 type delayHandler struct {
@@ -96,6 +106,7 @@ func (c *Checker) load(ctx context.Context, host, scheme string) robotsEntry {
 }
 
 func (c *Checker) fetchRobots(ctx context.Context, robotsURL string) robotsEntry {
+	ctx = fetch.WithRequestProxy(ctx, c.proxy) // no-op without a per-run proxy
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, robotsURL, nil)
 	if err != nil {
 		return robotsEntry{denyAll: true}

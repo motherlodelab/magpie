@@ -201,6 +201,18 @@ func requestProxyFrom(ctx context.Context) *url.URL {
 	return u
 }
 
+// WithRequestProxy injects a validated per-run proxy override into ctx
+// so requests built by ANY client on the guarded transport honor it —
+// the static fetcher does this internally via FetchRequest.Proxy;
+// bespoke clients (crawl's robots Checker) use this. u must come from
+// ValidateRequestProxy; nil is a no-op.
+func WithRequestProxy(ctx context.Context, u *url.URL) context.Context {
+	if u == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, requestProxyKey{}, u)
+}
+
 // ValidateRequestProxy parses a per-run proxy (FetchRequest.Proxy /
 // scrape.Options.Proxy / crawl.Options.Proxy): pool-line grammar
 // (http|https|socks5|socks5h URL, or host:port:user:pass). Typed
