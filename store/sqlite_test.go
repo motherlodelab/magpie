@@ -124,6 +124,34 @@ func TestSelectorRoundTrip(t *testing.T) {
 	}
 }
 
+// TestDeleteSelectorsAll pins the no-flag clear (magpie cache clear with
+// neither --domain nor --schema-hash): both args empty must evict every
+// row. Regression: the pre-v0.1.4 branch ran WHERE domain=” and matched
+// nothing, so the CLI's clear-all was a silent no-op.
+func TestDeleteSelectorsAll(t *testing.T) {
+	db := openTempDB(t)
+	doc := `{"fields":{"price":{"type":"css","expr":"#price"}}}`
+	for _, d := range []string{"ex.com", "other.com"} {
+		if err := db.PutSelectors(d, "h1", doc, 3); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n, err := db.DeleteSelectors("", "")
+	if err != nil || n != 2 {
+		t.Fatalf("DeleteSelectors all = %d,%v, want 2", n, err)
+	}
+	if _, ok, err := db.GetSelectors("ex.com", "h1"); err != nil || ok {
+		t.Errorf("ex.com after clear = %v,%v, want miss", ok, err)
+	}
+	if _, ok, err := db.GetSelectors("other.com", "h1"); err != nil || ok {
+		t.Errorf("other.com after clear = %v,%v, want miss", ok, err)
+	}
+	// Clearing an empty table is 0, not an error.
+	if n, err := db.DeleteSelectors("", ""); err != nil || n != 0 {
+		t.Errorf("re-clear = %d,%v, want 0", n, err)
+	}
+}
+
 func TestFrontierVector(t *testing.T) {
 	db := openTempDB(t)
 	urls := []string{"http://ex.com/1", "http://ex.com/2", "http://ex.com/3", "http://ex.com/4", "http://ex.com/5"}
