@@ -689,6 +689,19 @@ magpie cache inspect --domain amazon.fr
   skips the peer check for the proxy dial, exactly as `MAGPIE_PROXY`
   always has. Tor (`socks5://127.0.0.1:9050`) is the canonical loopback
   proxy: trusted egress, publicly-dialed targets.
+- **Per-run proxy (Batch B):** `fetch.FetchRequest.Proxy` /
+  `scrape.Options.Proxy` / `crawl.Options.Proxy` — a single egress URL
+  (pool-line grammar) that beats the env pool for that request/run
+  (flag-over-env precedence; the env pool is untouched and the override
+  is not sticky). Validated pre-I/O (`fetch.ValidateRequestProxy` →
+  `ErrProxyConfig` family, message names the field, never the value).
+  Threads everywhere egress matters: static fetches, rod
+  (`--proxy-server`; inline credentials unsupported — Chromium's flag
+  grammar has none), screenshot captures, extractor sub-fetches
+  (`verticalFetcher` injects it), and crawl page fetches + rod
+  escalation. The SSRF gauntlet is unchanged: a loopback TARGET via a
+  public per-run proxy stays rejected pre-dial (pinned by a
+  `proxy_security_test.go` matrix row).
 - **Typed challenges:** `fetch.ChallengeError{Vendor, StatusCode, URL}`
   with `fetch.DetectChallenge(body, headers, status)` — `cf-mitigated`
   header authoritative; body signatures (cloudflare, turnstile,

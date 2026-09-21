@@ -232,6 +232,32 @@ func TestProxy_SecurityMatrix(t *testing.T) {
 		}
 	})
 
+	t.Run("request-level proxy / loopback target still rejected", func(t *testing.T) {
+		// Batch B row: the per-run Proxy seam must re-enter the same
+		// gauntlet — proxy ≠ license, the loopback TARGET stays
+		// ValidateURL-rejected before the proxy is ever contacted.
+		var originHits atomic.Int64
+		origin := hitOrigin(t, &originHits, func(w http.ResponseWriter, _ *http.Request) {})
+		socks, conns, _ := fakeSOCKS5(t, mustURL(t, origin.URL))
+		t.Setenv("MAGPIE_PROXY", "")
+		t.Setenv("MAGPIE_PROXY_FILE", "")
+		// STRICT: no AllowPrivate — the loopback target has no opt-in.
+		f, err := fetch.NewStaticFetcherWithOptions(fetch.SSRFOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = f.Fetch(t.Context(), fetch.FetchRequest{URL: origin.URL, Proxy: socks})
+		if err == nil {
+			t.Fatal("loopback target via request-level proxy must stay rejected")
+		}
+		if n := originHits.Load(); n != 0 {
+			t.Errorf("origin hits = %d, want 0", n)
+		}
+		if conns.Load() != 0 {
+			t.Errorf("socks conns = %d, want 0 (rejection is pre-dial)", conns.Load())
+		}
+	})
+
 	t.Run("credentials never surface", func(t *testing.T) {
 		const secret = "hunter2password"
 		t.Setenv("MAGPIE_PROXY", "")

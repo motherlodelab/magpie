@@ -83,6 +83,13 @@ type Options struct {
 	// MAGPIE_CDP_URL is the env fallback (flag wins). Scheme validated
 	// here pre-I/O; empty = launch locally as always.
 	CDP string
+	// Proxy is a per-run egress override (pool-line grammar) that beats
+	// the env pool for this run's fetches: main page (static + browser),
+	// screenshot captures, and extractor sub-fetches (verticalFetcher
+	// injects it — extractors build their own FetchRequest and can't see
+	// run options). Validated here pre-I/O (OptionsError, ErrProxyConfig
+	// family).
+	Proxy string
 }
 
 // Result is one scraped page.
@@ -190,6 +197,11 @@ func ValidateOptions(o Options) error {
 			return &OptionsError{fmt.Sprintf("scrape: header %d must be \"Name: value\"", i+1)}
 		}
 	}
+	if o.Proxy != "" {
+		if _, err := fetch.ValidateRequestProxy(o.Proxy); err != nil {
+			return &OptionsError{fmt.Sprintf("scrape: %v", err)}
+		}
+	}
 	return nil
 }
 
@@ -242,7 +254,7 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 	// With actions, the capture joins that browser session (click-then-
 	// capture: the screenshot becomes the final action step).
 	if o.PageFormat == "screenshot" {
-		png, serr := screenshotPage(ctx, rawURL, o.Viewport, o.Actions, o.CDP)
+		png, serr := screenshotPage(ctx, rawURL, o)
 		if serr != nil {
 			finish(0, 1, "error")
 			return Result{}, serr
@@ -411,6 +423,10 @@ type verticalFetcher struct {
 }
 
 func (f verticalFetcher) Fetch(ctx context.Context, req fetch.FetchRequest) (*fetch.FetchResponse, error) {
+	// Extractors build their own FetchRequest and can't see run options —
+	// the per-run egress rides every sub-fetch (main page already got it
+	// via fetchURL).
+	req.Proxy = f.o.Proxy
 	resp, err := f.static.Fetch(ctx, req)
 	if err == nil {
 		return resp, nil
@@ -423,7 +439,7 @@ func (f verticalFetcher) Fetch(ctx context.Context, req fetch.FetchRequest) (*fe
 	if browser == nil {
 		browser = fetchBrowser
 	}
-	if bresp, berr := browser(ctx, req.URL, Options{CDP: f.o.CDP, Lang: f.o.Lang}); berr == nil {
+	if bresp, berr := browser(ctx, req.URL, Options{CDP: f.o.CDP, Lang: f.o.Lang, Proxy: f.o.Proxy}); berr == nil {
 		return bresp, nil
 	}
 	return nil, err
@@ -459,7 +475,7 @@ func fetchURL(ctx context.Context, vf vertical.Fetcher, rawURL, render string, o
 	}
 	// A4 pass-through: every status reaches Clean+Classify so blocked pages
 	// get typed quality errors instead of "fetch: HTTP %d".
-	resp, err := vf.Fetch(ctx, fetch.FetchRequest{URL: rawURL, Profile: o.Profile, Cookies: o.Cookies, Browser: o.Browser, Lang: o.Lang, Headers: o.Headers})
+	resp, err := vf.Fetch(ctx, fetch.FetchRequest{URL: rawURL, Profile: o.Profile, Cookies: o.Cookies, Browser: o.Browser, Lang: o.Lang, Headers: o.Headers, Proxy: o.Proxy})
 	if err != nil {
 		// G.2: a typed challenge gets exactly one rod escalation attempt
 		// under render=auto (a real browser often clears it); static
@@ -505,17 +521,17 @@ func parseViewport(v string) (int, int, error) {
 
 // screenshotPage captures a full-page PNG through a fresh browser;
 // with actions the capture joins the action session as its final step.
-func screenshotPage(ctx context.Context, rawURL, viewport string, actions []string, cdp string) ([]byte, error) {
-	w, h, err := parseViewport(viewport)
+func screenshotPage(ctx context.Context, rawURL string, o Options) ([]byte, error) {
+	w, h, err := parseViewport(o.Viewport)
 	if err != nil {
-		return nil, &OptionsError{fmt.Sprintf("scrape: viewport %q must be WxH (e.g. 1280x800)", viewport)}
+		return nil, &OptionsError{fmt.Sprintf("scrape: viewport %q must be WxH (e.g. 1280x800)", o.Viewport)}
 	}
-	acts, err := fetch.ParseActions(actions)
+	acts, err := fetch.ParseActions(o.Actions)
 	if err != nil {
 		return nil, err
 	}
 	rod := fetch.NewRodFetcher()
-	rod.CDP = cdp
+	rod.CDP, rod.Proxy = o.CDP, o.Proxy
 	defer func() { _ = rod.Close() }() //nolint:errcheck // browser teardown; failure unactionable
 	if len(acts) == 0 {
 		return rod.Screenshot(ctx, rawURL, w, h)
@@ -549,7 +565,7 @@ func fetchBrowser(ctx context.Context, rawURL string, o Options) (*fetch.FetchRe
 		return nil, err
 	}
 	rod := fetch.NewRodFetcher()
-	rod.CDP = o.CDP
+	rod.CDP, rod.Proxy = o.CDP, o.Proxy
 	defer func() { _ = rod.Close() }() //nolint:errcheck // browser teardown; failure unactionable
 	return rod.FetchWithActions(ctx, fetch.FetchRequest{URL: rawURL, Lang: o.Lang, CaptureXHR: o.CaptureXHR}, acts)
 }

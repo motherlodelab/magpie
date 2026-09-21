@@ -296,3 +296,66 @@ func TestProxy_PoolNoProxyBypass(t *testing.T) {
 		t.Errorf("proxy hits = %d, want 0 (NO_PROXY bypasses the pool)", n)
 	}
 }
+
+// TestProxy_RequestBeatsEnv — Batch B: the per-run Proxy beats the env
+// pool for THIS request, wins pre-I/O on garbage, and is opt-in (an
+// identical request without Proxy rides the pool; the override is not
+// sticky). The pool memoization is keyed per env value, so the two
+// pools never cross-contaminate.
+func TestProxy_RequestBeatsEnv(t *testing.T) {
+	var originHits atomic.Int64
+	origin := hitOrigin(t, &originHits, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok")) //nolint:errcheck // test server
+	})
+	poolA, connsA, _ := fakeSOCKS5(t, mustURL(t, origin.URL))
+	poolB, connsB, _ := fakeSOCKS5(t, mustURL(t, origin.URL))
+	t.Setenv("MAGPIE_PROXY", "")
+	t.Setenv("MAGPIE_PROXY_FILE", poolFile(t, poolA))
+	t.Setenv("NO_PROXY", "")
+
+	f := relaxedFetcher(t)
+	resp, err := f.Fetch(t.Context(), fetch.FetchRequest{URL: origin.URL + "/x", Proxy: poolB})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := connsB.Load(); n != 1 {
+		t.Errorf("request proxy conns = %d, want 1", n)
+	}
+	if n := connsA.Load(); n != 0 {
+		t.Errorf("env pool conns = %d, want 0 (override must bypass the pool)", n)
+	}
+	if got, want := resp.Proxy, strings.TrimPrefix(poolB, "socks5://"); got != want {
+		t.Errorf("surfaced proxy = %q, want %q (response audit trail)", got, want)
+	}
+
+	// Opt-in, not sticky: the same request WITHOUT Proxy rides pool A.
+	if _, err := f.Fetch(t.Context(), fetch.FetchRequest{URL: origin.URL + "/y"}); err != nil {
+		t.Fatal(err)
+	}
+	if n := connsA.Load(); n != 1 {
+		t.Errorf("env pool conns after pool-routed request = %d, want 1", n)
+	}
+	if n := connsB.Load(); n != 1 {
+		t.Errorf("override must not be sticky: B conns = %d, want 1", n)
+	}
+}
+
+// TestProxy_BadScheme — Batch B: a bad per-run proxy is a typed
+// ErrProxyConfig failure BEFORE any I/O, message naming the field.
+func TestProxy_BadScheme(t *testing.T) {
+	var originHits atomic.Int64
+	origin := hitOrigin(t, &originHits, func(w http.ResponseWriter, _ *http.Request) {})
+	for _, bad := range []string{"ftp://p.example:3128", "not-a-url", "127.0.0.1:9999", "http://"} {
+		_, err := relaxedFetcher(t).Fetch(t.Context(), fetch.FetchRequest{URL: origin.URL + "/x", Proxy: bad})
+		if err == nil || !errors.Is(err, fetch.ErrProxyConfig) {
+			t.Errorf("Proxy %q: err = %v, want ErrProxyConfig family", bad, err)
+			continue
+		}
+		if !strings.Contains(err.Error(), "per-run proxy") {
+			t.Errorf("Proxy %q: err %q must name the per-run field", bad, err)
+		}
+	}
+	if n := originHits.Load(); n != 0 {
+		t.Errorf("origin hits = %d, want 0 (bad proxy config must fail pre-I/O)", n)
+	}
+}

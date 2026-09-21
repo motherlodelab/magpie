@@ -186,6 +186,28 @@ func (p *pool) reportFailure(idx int) {
 	p.dead[idx] = time.Now().Add(p.cooldown)
 }
 
+// requestProxyKey carries a per-request proxy URL (FetchRequest.Proxy)
+// through the http.Request context so proxyFunc honors it ahead of the
+// env pool — flag-over-env, the house precedence. Context, not a
+// transport field: the static client is shared, the override is per run.
+type requestProxyKey struct{}
+
+// ValidateRequestProxy parses a per-run proxy (FetchRequest.Proxy /
+// scrape.Options.Proxy / crawl.Options.Proxy): pool-line grammar
+// (http|https|socks5|socks5h URL, or host:port:user:pass). Typed
+// ErrProxyConfig so callers map it to exit 2; the message names the
+// field, never the raw value (vendor pastes carry credentials).
+func ValidateRequestProxy(raw string) (*url.URL, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	e, err := parsePoolLine(raw)
+	if err != nil {
+		return nil, fmt.Errorf("%w: per-run proxy: want %s", ErrProxyConfig, ProxyHelp)
+	}
+	return e.u, nil
+}
+
 // RedactProxy renders a proxy URL as host:port — credentials never
 // appear in errors, logs, or records.
 func RedactProxy(u *url.URL) string {

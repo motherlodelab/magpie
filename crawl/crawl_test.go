@@ -1432,3 +1432,39 @@ func TestCrawl_CorpusAutoThrottle(t *testing.T) {
 		t.Fatalf("res = ok:%d rec:%d err:%d, want 3/3/0", res.PagesOK, res.Records, res.PagesErr)
 	}
 }
+
+// TestCrawl_ProxyThreadsToFetch — Batch B: Options.Proxy reaches every
+// page fetch. A dead loopback proxy must fail all pages (the option
+// rode the request); the identical crawl without it succeeds. The SOCKS
+// fake is fetch-test-internal (no forking), so the dead-port pin proves
+// the threading both ways. Runs under -race: PR #22's crawl ctx fix
+// must not regress on this path.
+func TestCrawl_ProxyThreadsToFetch(t *testing.T) {
+	o := newSiteOrigin(t, map[string]string{"/": itemPage()}, "")
+	base := func() Options {
+		return Options{
+			SeedURL: o.srv.URL + "/", Corpus: true,
+			MaxPages: 1, MaxDepth: 1, SameHost: true,
+			FetchWorkers: 2, Rate: 1000, Format: "jsonl",
+			Out: filepath.Join(t.TempDir(), "c.jsonl"),
+			DB:  openCrawlDB(t),
+		}
+	}
+	withDeadProxy := base()
+	withDeadProxy.Proxy = "http://127.0.0.1:1"
+	res, err := Run(context.Background(), withDeadProxy)
+	if err != nil {
+		t.Fatalf("crawl with dead proxy: %v (page failures are outcomes, not run errors)", err)
+	}
+	if res.PagesOK != 0 || res.PagesErr != 1 {
+		t.Errorf("pages ok/err = %d/%d, want 0/1 (fetches must ride the per-run proxy)", res.PagesOK, res.PagesErr)
+	}
+
+	res, err = Run(context.Background(), base())
+	if err != nil {
+		t.Fatalf("crawl without Proxy: %v", err)
+	}
+	if res.PagesOK != 1 || res.PagesErr != 0 {
+		t.Errorf("pages ok/err = %d/%d, want 1/0", res.PagesOK, res.PagesErr)
+	}
+}

@@ -121,12 +121,21 @@ func addrIP(addr net.Addr) (netip.Addr, bool) {
 	return a, ok
 }
 
-// proxyFunc resolves the proxy per request: the pool (MAGPIE_PROXY_FILE,
-// then MAGPIE_PROXY) wins over the standard HTTP(S)_PROXY environment,
-// with a minimal NO_PROXY exact/dot-suffix bypass. Read per request so
-// env changes take effect without rebuilding the transport. The chosen
-// pick is recorded for the failover loop and response surfacing.
+// proxyFunc resolves the proxy per request: a request-level override
+// (FetchRequest.Proxy) wins over the pool (MAGPIE_PROXY_FILE, then
+// MAGPIE_PROXY), which wins over the standard HTTP(S)_PROXY environment,
+// with a minimal NO_PROXY exact/dot-suffix bypass for the env legs. Read
+// per request so env changes take effect without rebuilding the
+// transport. The chosen pick is recorded for the failover loop and
+// response surfacing (an override pick has no pool to report failures
+// against — p is nil — so cooldowns never touch the shared pool).
 func proxyFunc(req *http.Request) (*url.URL, error) {
+	if u, ok := req.Context().Value(requestProxyKey{}).(*url.URL); ok && u != nil {
+		if ref := pickRefFrom(req.Context()); ref != nil {
+			ref.set(nil, 0, u)
+		}
+		return u, nil
+	}
 	u, p, idx, err := proxyForHostPick(req.URL.Hostname())
 	if err == nil && p != nil {
 		if ref := pickRefFrom(req.Context()); ref != nil {
@@ -282,6 +291,16 @@ func (s *StaticFetcher) do(ctx context.Context, req FetchRequest) (*FetchRespons
 		return nil, err
 	}
 	browserPath := client != s.client
+	// Per-run proxy override: validated here (pre-I/O, typed error) and
+	// carried on the request context so proxyFunc — shared by the whole
+	// client — sees it for this request only.
+	if req.Proxy != "" {
+		u, perr := ValidateRequestProxy(req.Proxy)
+		if perr != nil {
+			return nil, perr
+		}
+		cctx = context.WithValue(cctx, requestProxyKey{}, u)
+	}
 	hreq, err := http.NewRequestWithContext(cctx, http.MethodGet, req.URL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("fetch: %w", err)

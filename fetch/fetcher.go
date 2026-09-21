@@ -23,6 +23,13 @@ type FetchRequest struct {
 	// the options boundary (scrape.ValidateOptions); malformed lines
 	// (no colon) are skipped here.
 	Headers []string
+	// Proxy is a per-run egress override (http|https|socks5(h)://host:port
+	// or host:port:user:pass — pool-line grammar) that beats the env
+	// pool for THIS request (flag-over-env precedence). Validated
+	// pre-I/O: fetch.ValidateRequestProxy → ErrProxyConfig family. Rod
+	// path: launcher --proxy-server (credentials unsupported there —
+	// Chromium's flag grammar has no inline auth).
+	Proxy string
 	// CaptureXHR lists Go regexps; matching XHR/fetch response bodies are
 	// captured into FetchResponse.XHR. Rod-only: static fetchers ignore
 	// this (CLI/MCP reject the combination at the options boundary).
