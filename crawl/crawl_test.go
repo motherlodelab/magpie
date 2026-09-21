@@ -1749,3 +1749,26 @@ properties:
 		t.Errorf("selectors persisted despite nothing relocating (found=%v err=%v)", found, err)
 	}
 }
+
+// TestCrawlSource_UnderHygieneBar pins AGENTS.md's ~500-line rule for this
+// package: crawl.go regrew past the bar once and had to be split (PR #34);
+// this fails loudly if any non-test source file regrows.
+func TestCrawlSource_UnderHygieneBar(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		data, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := strings.Count(string(data), "\n"); n > 500 {
+			t.Errorf("%s = %d lines, want ≤ 500 (split it at its topic seam)", name, n)
+		}
+	}
+}
