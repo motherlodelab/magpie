@@ -1536,14 +1536,20 @@ func relocateSamples(t *testing.T, n int) []selector.SynthSample {
 
 // relocateOrigin serves the NEW template (product-B) everywhere, with a
 // seed page at / linking /p1../p11. robots.txt rides the default branch
-// (HTML → allow-all), same as TestCrawl_QualityCountedNotCached.
+// (HTML → allow-all), same as TestCrawl_QualityCountedNotCached. A prose
+// pad (fixture file stays untouched) keeps visible text ≥ 200 chars so
+// the JS-required heuristic never escalates pages to rod — the pads sit
+// outside </main>, so every selector and the buybox parent chain are
+// exactly product-B's.
 func relocateOrigin(t *testing.T, bHTML string) *httptest.Server {
 	t.Helper()
 	var links strings.Builder
 	for i := 1; i <= 11; i++ {
 		fmt.Fprintf(&links, `<a href="/p%d">p%d</a> `, i, i)
 	}
-	seed := strings.Replace(bHTML, "</body>", "<nav>"+links.String()+"</nav></body>", 1)
+	pad := "<p>" + strings.Repeat("honest crawlable prose ", 30) + "</p>"
+	bServed := strings.Replace(bHTML, "</body>", pad+"</body>", 1)
+	seed := strings.Replace(bHTML, "</body>", pad+"<nav>"+links.String()+"</nav></body>", 1)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -1551,7 +1557,7 @@ func relocateOrigin(t *testing.T, bHTML string) *httptest.Server {
 			_, _ = w.Write([]byte(seed)) //nolint:errcheck // httptest local; short write unactionable
 			return
 		}
-		_, _ = w.Write([]byte(bHTML)) //nolint:errcheck // httptest local; short write unactionable
+		_, _ = w.Write([]byte(bServed)) //nolint:errcheck // httptest local; short write unactionable
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)

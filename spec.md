@@ -265,6 +265,8 @@ Our differentiator vs all three: **synthesize selectors once from N samples, val
 
 Selectors are cached and healed **per field**, not per page. A price selector breaking after a site redesign triggers re-synthesis of `price` alone while `title`/`ean` keep serving from cache. Re-synthesis uses the most recent pages that still produced valid values for the healthy fields as samples. If ≥ 50% of fields are broken simultaneously, treat it as a full redesign and re-synthesize the whole template.
 
+Before paying for LLM re-synthesis, the heal pass first attempts **deterministic element relocation**: each field's doc carries a structural fingerprint (tag, classes, id, whitelisted attributes, parent/grandparent signature, numeric-text flag) of the element its cached selector matches, and relocation re-finds that element on the retained new-template samples by weighted similarity. A replacement selector is accepted only when it extracts the already-retained ground truth on every new-template sample (no shape-only acceptance); when the fingerprint is missing, fewer than two usable samples exist, the best candidate is below threshold or ambiguous, or the field is Multiple/jsonld, relocation **declines** and the existing LLM re-synthesis path runs unchanged. Relocation itself makes zero LLM calls.
+
 ### 4.4 Cache storage format & location
 
 SQLite table `selector_cache` (§9). Selectors stored as a JSON document:
@@ -279,9 +281,12 @@ SQLite table `selector_cache` (§9). Selectors stored as a JSON document:
   },
   "synthesized_at": "2026-09-16T10:00:00Z",
   "samples_used": 3,
+  "fingerprints": {"price": {"tag": "span", "id": "a-price", "parent": "div.buybox", "num_text": true}},
   "engine_version": 2
 }
 ```
+
+The optional `fingerprints` map records, per css field, the structural fingerprint of the element its selector matches (§4.3 relocation); it is absent on EngineVersion-1 docs, and old caches behave exactly as before.
 
 Location: `%LOCALAPPDATA%\magpie\cache.db` on Windows, `$XDG_CACHE_HOME/magpie/cache.db` (fallback `~/.cache/magpie`) on Linux/macOS. Override with `--cache-db`.
 
