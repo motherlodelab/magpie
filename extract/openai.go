@@ -101,7 +101,7 @@ func (o *OpenAIAdapter) promptOnce(ctx context.Context, system, user string, doc
 	for k, v := range o.ExtraHeaders {
 		headers[k] = v
 	}
-	out, err := postJSON(ctx, endpointURL(o.BaseURL, "/v1/chat/completions"), headers, body)
+	out, err := postJSON(ctx, o.BaseURL+"/chat/completions", headers, body)
 	if err != nil {
 		return "", TokenUsage{}, err
 	}

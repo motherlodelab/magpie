@@ -156,11 +156,13 @@ func schemaDoc(raw any) (any, error) {
 // httpClient is shared: one LLM call at a time per run, no per-call setup.
 var httpClient = &http.Client{Timeout: 120 * time.Second}
 
-// endpointURL joins a provider base and a full API path ("/v1/…"). Bases in
-// the wild disagree about carrying the /v1 segment — api.anthropic.com does
-// not, api.openai.com/v1, the zen bases and MAGPIE_BASE_URL usually do — so
-// the join collapses a doubled /v1 instead of posting to /v1/v1/… (which 404'd
-// every messages-routed zen model).
+// endpointURL joins the Anthropic base URL and API path ("/v1/messages").
+// Bases in the wild disagree about carrying the /v1 segment —
+// api.anthropic.com does not, the zen bases and MAGPIE_BASE_URL usually do —
+// so the join collapses a doubled /v1 instead of posting to /v1/v1/… (which
+// 404'd every messages-routed zen model). The OpenAI adapter is NOT routed
+// through this: it appends "/chat/completions" verbatim, so root-mounted
+// gateways keep working untouched.
 func endpointURL(base, path string) string {
 	if strings.HasSuffix(base, "/v1") && strings.HasPrefix(path, "/v1/") {
 		return base + path[len("/v1"):]
