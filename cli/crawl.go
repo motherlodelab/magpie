@@ -252,9 +252,14 @@ func runCrawl(ctx context.Context, seedURL string, o crawlCLIOptions) error {
 		}
 	}
 
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
+	defer stop()
+
 	// Subprocess exporter tee: records flow to --out AND the child stdin.
 	// The exporter is a copy — its failure warns (exit 4) but never blocks
-	// the primary sink.
+	// the primary sink. Spawned after the NotifyContext swap: the closure
+	// captures the ctx VARIABLE, so spawning must follow the last write
+	// (go-statement ordering is the happens-before edge).
 	var exportCh chan map[string]any
 	var exportDone chan error
 	var onRecord func(map[string]any)
@@ -266,9 +271,6 @@ func runCrawl(ctx context.Context, seedURL string, o crawlCLIOptions) error {
 		go func() { exportDone <- exp.Export(ctx, exportCh) }()
 		onRecord = func(r map[string]any) { exportCh <- r }
 	}
-
-	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
-	defer stop()
 
 	res, err := crawl.Run(ctx, crawl.Options{
 		SeedURL: seedURL, Schema: sch, MaxPages: o.MaxPages, MaxDepth: o.MaxDepth,
