@@ -42,6 +42,15 @@ testdata/     # golden fixtures
 plan/         # big-plan.md + phase-N.md planning artifacts
 ```
 
+## Cross-repo (magpie-desktop)
+
+Sibling: `../magpie-desktop` (PRIVATE Wails3 product shell over this core).
+System map (local checkouts): `../SHARED-CONTEXT.md` at the projects root
+(sibling of this repo; symlinked inside magpie-desktop, which is private).
+Direction is one-way: desktop imports core, core never imports desktop.
+Core changes the GUI needs arrive as public PRs here + a tag bump there.
+Planning docs for the product live in the desktop repo (`docs/`), not here.
+
 ## Don't / gotchas
 
 - **No new dep without asking:** a dependency is a permanent maintenance and supply-chain cost.

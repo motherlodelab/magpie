@@ -270,13 +270,18 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 		}
 	}
 
+	// The wrapper rides every vertical fetch; the browser func only fires
+	// on a typed challenge from an extractor's sub-fetch.
+	vfetch := verticalFetcher{static: vf, o: o}
+	vbase := Result{RunID: runID, URL: rawURL}
+
 	page, err := fetchURL(ctx, vf, rawURL, render, o)
 	if err != nil {
 		if dispatch == nil {
 			finish(0, 1, "error")
 			return Result{}, err
 		}
-		return runVertical(ctx, verticalFetcher{static: vf, o: o}, rawURL, *dispatch, Result{RunID: runID, URL: rawURL}, finish)
+		return runVertical(ctx, vfetch, rawURL, *dispatch, vbase, finish)
 	}
 	// Fetch telemetry rides the run row next to LLM usage; warn-only,
 	// never fails the page. The proxy entry that served (redacted
@@ -297,7 +302,7 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 	})
 	if err != nil || cleaned.Quality != clean.IssueNone {
 		if dispatch != nil {
-			return runVertical(ctx, verticalFetcher{static: vf, o: o}, rawURL, *dispatch, Result{RunID: runID, URL: rawURL}, finish)
+			return runVertical(ctx, vfetch, rawURL, *dispatch, vbase, finish)
 		}
 		finish(0, 1, "error")
 		if err != nil {
@@ -321,7 +326,7 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 	}
 
 	if dispatch != nil {
-		return runVertical(ctx, verticalFetcher{static: vf, o: o}, rawURL, *dispatch, base, finish)
+		return runVertical(ctx, vfetch, rawURL, *dispatch, base, finish)
 	}
 
 	// No schema → markdown only, no LLM.
@@ -383,8 +388,9 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 // semantics for extractors' own fetches: a typed challenge gets exactly
 // one rod escalation (a real browser often clears it; honor o.CDP). The
 // typed error stays primary when the browser can't clear it — launch
-// noise never masks the vendor. Zero-value browser is fetchBrowser;
-// tests inject a fake via the browser field.
+// noise never masks the vendor. Actions/CaptureXHR are stripped: they were
+// authored for the main page, not the extractor's sub-fetch URLs. Zero-value
+// browser is fetchBrowser; tests inject a fake via the browser field.
 type verticalFetcher struct {
 	static  vertical.Fetcher
 	o       Options
@@ -404,7 +410,7 @@ func (f verticalFetcher) Fetch(ctx context.Context, req fetch.FetchRequest) (*fe
 	if browser == nil {
 		browser = fetchBrowser
 	}
-	if bresp, berr := browser(ctx, req.URL, f.o); berr == nil {
+	if bresp, berr := browser(ctx, req.URL, Options{CDP: f.o.CDP, Lang: f.o.Lang}); berr == nil {
 		return bresp, nil
 	}
 	return nil, err

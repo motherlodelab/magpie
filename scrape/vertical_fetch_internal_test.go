@@ -43,13 +43,24 @@ func TestVerticalFetcher_Escalation(t *testing.T) {
 
 	t.Run("challenge escalates to browser", func(t *testing.T) {
 		calls := 0
-		f := verticalFetcher{static: cannedFetcher{err: challenged}, browser: fakeBrowser(okResp, nil, &calls)}
+		var gotOpts Options
+		f := verticalFetcher{static: cannedFetcher{err: challenged}, o: Options{Actions: []string{`click "#x"`}, CaptureXHR: []string{"/api/"}, CDP: "ws://127.0.0.1:9222", Lang: "en-GB"}}
+		f.browser = func(_ context.Context, _ string, o Options) (*fetch.FetchResponse, error) {
+			calls++
+			gotOpts = o
+			return okResp, nil
+		}
 		resp, err := f.Fetch(context.Background(), fetch.FetchRequest{URL: "https://x.test/a"})
 		if err != nil || string(resp.HTML) != "<p>ok</p>" {
 			t.Fatalf("Fetch = %v, %v — want browser response", resp, err)
 		}
 		if calls != 1 {
 			t.Errorf("browser calls = %d, want 1", calls)
+		}
+		// Actions/CaptureXHR were authored for the main page — must not
+		// re-run against the extractor's sub-fetch URL; CDP/Lang carry.
+		if len(gotOpts.Actions) != 0 || len(gotOpts.CaptureXHR) != 0 || gotOpts.CDP != "ws://127.0.0.1:9222" || gotOpts.Lang != "en-GB" {
+			t.Errorf("escalation opts = %+v, want actions/xhr stripped, cdp+lang carried", gotOpts)
 		}
 	})
 

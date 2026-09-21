@@ -2,6 +2,7 @@ package fetch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -168,7 +169,8 @@ func (r *RodFetcher) FetchWithActions(ctx context.Context, req FetchRequest, act
 // XHR capture (between creation and navigation — early responses must be
 // seen), then navigates. One create-then-navigate shape for both lang
 // paths: the blank-page round trip is sub-ms next to the fixed 2s settle.
-func (r *RodFetcher) openPage(cctx context.Context, req FetchRequest, caps *xhrCollector) (*rod.Page, error) {	page, err := r.browser.Context(cctx).Page(proto.TargetCreateTarget{})
+func (r *RodFetcher) openPage(cctx context.Context, req FetchRequest, caps *xhrCollector) (*rod.Page, error) {
+	page, err := r.browser.Context(cctx).Page(proto.TargetCreateTarget{})
 	if err != nil {
 		return nil, fmt.Errorf("fetch: open page: %w", err)
 	}
@@ -201,40 +203,44 @@ func navRetryable(err error) bool {
 // pre-wait (the viewport override). A retryable WaitLoad race gets exactly
 // one fresh navigation; every other error surfaces as-is. The event
 // consumer starts inside openPage, pre-navigation, on every attempt.
+// openLoadedPage navigates and waits for load. prepare runs post-open,
+// pre-wait (the viewport override). A retryable WaitLoad race gets exactly
+// one fresh navigation; every other error surfaces as-is. When the retry
+// fails, its error joins the original — the race stays the primary wrap.
+// ponytail: with CaptureXHR set, a retry's response can carry partial
+// bodies from the aborted first navigation — acceptable for a race guard.
 func (r *RodFetcher) openLoadedPage(cctx context.Context, req FetchRequest, caps *xhrCollector, prepare func(*rod.Page) error) (*rod.Page, error) {
-	page, err := r.openPage(cctx, req, caps)
-	if err != nil {
-		return nil, err
-	}
-	if prepare != nil {
-		if err := prepare(page); err != nil {
-			_ = page.Close() //nolint:errcheck // error path; teardown failure unactionable
+	var firstErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		page, err := r.openPage(cctx, req, caps)
+		if err != nil {
+			if firstErr != nil {
+				return nil, fmt.Errorf("fetch: wait load: %w", errors.Join(firstErr, err))
+			}
 			return nil, err
 		}
-	}
-	werr := page.WaitLoad()
-	if werr == nil {
-		return page, nil
-	}
-	_ = page.Close() //nolint:errcheck // error path; teardown failure unactionable
-	if !navRetryable(werr) {
-		return nil, fmt.Errorf("fetch: wait load: %w", werr)
-	}
-	page, err = r.openPage(cctx, req, caps)
-	if err != nil {
-		return nil, fmt.Errorf("fetch: wait load: %w", werr)
-	}
-	if prepare != nil {
-		if err := prepare(page); err != nil {
-			_ = page.Close() //nolint:errcheck // error path; teardown failure unactionable
+		if prepare != nil {
+			if err := prepare(page); err != nil {
+				_ = page.Close() //nolint:errcheck // error path; teardown failure unactionable
+				if firstErr != nil {
+					return nil, fmt.Errorf("fetch: wait load: %w", errors.Join(firstErr, err))
+				}
+				return nil, err
+			}
+		}
+		werr := page.WaitLoad()
+		if werr == nil {
+			return page, nil
+		}
+		_ = page.Close() //nolint:errcheck // error path; teardown failure unactionable
+		if firstErr == nil {
+			firstErr = werr
+		}
+		if !navRetryable(werr) {
 			return nil, fmt.Errorf("fetch: wait load: %w", werr)
 		}
 	}
-	if err := page.WaitLoad(); err != nil {
-		_ = page.Close() //nolint:errcheck // error path; teardown failure unactionable
-		return nil, fmt.Errorf("fetch: wait load: %w", err)
-	}
-	return page, nil
+	return nil, fmt.Errorf("fetch: wait load: %w", firstErr)
 }
 
 // runActions executes action lines in order under the fetch budget.
