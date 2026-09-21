@@ -37,7 +37,7 @@ func Synthesize(ctx context.Context, samples []SynthSample, sch *extract.Schema,
 		Fields:        map[string]FieldSelector{},
 		SynthesizedAt: time.Now().UTC().Format(time.RFC3339),
 		SamplesUsed:   n,
-		EngineVersion: 1,
+		EngineVersion: 2,
 	}
 	want := map[string]bool{}
 	for _, f := range SchemaFields(sch) {
@@ -137,6 +137,32 @@ func Synthesize(ctx context.Context, samples []SynthSample, sch *extract.Schema,
 	}
 	if len(nonCacheable) > 0 {
 		warnf("selector: fields %v below agreement threshold; per-page LLM extraction (not cached)", nonCacheable)
+	}
+	// Fingerprints for the relocation pass (zero-LLM heal middle step):
+	// remember what the matched element looks like on the newest sample
+	// where the cached selector actually hits. css fields only.
+	for _, field := range sortedKeys(want) {
+		sel, ok := doc.Fields[field]
+		if !ok || sel.Type != "css" {
+			continue
+		}
+		for i := len(samples) - 1; i >= 0; i-- {
+			s := samples[i]
+			d, err := goquery.NewDocumentFromReader(bytes.NewReader([]byte(s.HTML)))
+			if err != nil {
+				continue
+			}
+			if _, hit := ExtractFieldValue(d, s.Sidecar, field, sel, sch.Hints); !hit {
+				continue
+			}
+			if fp, ok := fingerprintSel(d, sel, sch.Hints); ok {
+				if doc.Fingerprints == nil {
+					doc.Fingerprints = map[string]ElementFP{}
+				}
+				doc.Fingerprints[field] = fp
+			}
+			break
+		}
 	}
 	return doc, nil
 }

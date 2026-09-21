@@ -38,6 +38,7 @@ type SelectorDoc struct {
 	SchemaHash    string                   `json:"schema_hash"`
 	Domain        string                   `json:"domain"`
 	Fields        map[string]FieldSelector `json:"fields"`
+	Fingerprints  map[string]ElementFP     `json:"fingerprints,omitempty"`
 	SynthesizedAt string                   `json:"synthesized_at"`
 	SamplesUsed   int                      `json:"samples_used"`
 	EngineVersion int                      `json:"engine_version"`
