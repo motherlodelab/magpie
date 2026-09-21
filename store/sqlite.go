@@ -406,11 +406,14 @@ func (d *DB) PutSelectors(domain, schemaHash, fieldsJSON string, samplesUsed int
 	return nil
 }
 
-// DeleteSelectors evicts cached selectors; empty hash clears the whole domain.
+// DeleteSelectors evicts cached selectors; empty hash clears the whole
+// domain; both empty clears everything (magpie cache clear with no flags).
 func (d *DB) DeleteSelectors(domain, schemaHash string) (int64, error) {
 	var res sql.Result
 	var err error
-	if schemaHash == "" {
+	if domain == "" && schemaHash == "" {
+		res, err = d.db.Exec(`DELETE FROM selector_cache`)
+	} else if schemaHash == "" {
 		res, err = d.db.Exec(`DELETE FROM selector_cache WHERE domain=?`, domain)
 	} else {
 		res, err = d.db.Exec(`DELETE FROM selector_cache WHERE domain=? AND schema_hash=?`, domain, schemaHash)
