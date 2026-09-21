@@ -15,6 +15,8 @@ import (
 	"github.com/motherlodelab/magpie/fetch"
 	"github.com/motherlodelab/magpie/scrape"
 	"github.com/motherlodelab/magpie/selector"
+	"net/url"
+
 	"github.com/motherlodelab/magpie/vertical"
 )
 
@@ -316,5 +318,65 @@ func TestRun_VerticalExplicitOptIn(t *testing.T) {
 	}
 	if res.Vertical != "shopify_product" || res.Record["title"] != "Demo T-Shirt" {
 		t.Errorf("opt-in hit = (%q, %v), want shopify record", res.Vertical, res.Record)
+	}
+}
+
+// TestRun_VerticalSurvivesBlockedPage: the main page fetch is result
+// context for a vertical, never a gate — a typed challenge on it must not
+// kill a run whose extractor fetches its own targets (reddit-class: the
+// HTML page is blocked, the record comes from elsewhere).
+func TestRun_VerticalSurvivesBlockedPage(t *testing.T) {
+	target := "https://escalation.test/watch?v=abc123def45"
+	ex := vertical.Extractor{
+		Info:  vertical.Info{Name: "escalationtest", Label: "Escalation test", Desc: "test-only"},
+		Match: func(u *url.URL) bool { return u.Host == "escalation.test" },
+		Extract: func(_ context.Context, _ vertical.Fetcher, _ *url.URL) (map[string]any, error) {
+			return map[string]any{"title": "Widget"}, nil
+		},
+	}
+	if err := vertical.Register(ex); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	db := openScrapeDB(t)
+	deps := fakeDeps(db, &fakeExtractor{}, "")
+	deps.Fetcher = &fakeGatedFetcher{errs: map[string]error{target: &fetch.ChallengeError{Vendor: "cloudflare", StatusCode: 403, URL: target}}}
+	res, err := scrape.Run(context.Background(), deps, target, scrape.Options{
+		Render: "auto", Vertical: "escalationtest",
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Record["title"] != "Widget" || res.Vertical != "escalationtest" {
+		t.Errorf("record = (%q, %v), want the vertical record", res.Vertical, res.Record)
+	}
+}
+
+// TestRun_VerticalSurvivesQualityGate: a 200 JS-shell main page fails the
+// clean quality gate — that also must not kill a vertical run
+// (youtube-class: the watch page renders as a consent shell under static
+// fetch while the extractor's own targets carry the data).
+func TestRun_VerticalSurvivesQualityGate(t *testing.T) {
+	target := "https://escalation.test/shell"
+	ex := vertical.Extractor{
+		Info:  vertical.Info{Name: "escalationtest2", Label: "Escalation test", Desc: "test-only"},
+		Match: func(u *url.URL) bool { return u.Host == "escalation.test" },
+		Extract: func(_ context.Context, _ vertical.Fetcher, _ *url.URL) (map[string]any, error) {
+			return map[string]any{"title": "Widget"}, nil
+		},
+	}
+	if err := vertical.Register(ex); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	db := openScrapeDB(t)
+	deps := fakeDeps(db, &fakeExtractor{}, "")
+	deps.Fetcher = &fakeGatedFetcher{bodies: map[string][]byte{target: []byte("<html><head><title>shell</title></head><body><p>hi</p></body></html>")}}
+	res, err := scrape.Run(context.Background(), deps, target, scrape.Options{
+		Render: "auto", Vertical: "escalationtest2",
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Record["title"] != "Widget" {
+		t.Errorf("record = %v, want the vertical record", res.Record)
 	}
 }

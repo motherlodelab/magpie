@@ -250,10 +250,33 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 	}
 	fetchStart := time.Now()
 	render := defaultRender(o.Render) // same default ValidateOptions validated
+
+	// Vertical dispatch is decided from the URL alone, BEFORE any fetch:
+	// extractors fetch their own targets (watch pages, JSON APIs), so the
+	// main page fetch is result context for them, never a gate. A blocked
+	// or JS-shell main page must not kill a vertical run (youtube's
+	// consent shell used to die in Clean before dispatch ever ran).
+	var dispatch *vertical.Extractor
+	if explicit != nil {
+		// ^ --list ships in Phase C; the message names it anyway so the string never changes.
+		if u, err := url.Parse(rawURL); err != nil || !explicit.Match(u) {
+			finish(0, 1, "error")
+			return Result{}, fmt.Errorf("scrape: vertical %q: %w for %s", o.Vertical, vertical.ErrURLMismatch, rawURL)
+		}
+		dispatch = explicit
+	} else if o.Vertical == "auto" {
+		if ex, ok := vertical.MatchURL(rawURL); ok {
+			dispatch = &ex
+		}
+	}
+
 	page, err := fetchURL(ctx, vf, rawURL, render, o)
 	if err != nil {
-		finish(0, 1, "error")
-		return Result{}, err
+		if dispatch == nil {
+			finish(0, 1, "error")
+			return Result{}, err
+		}
+		return runVertical(ctx, verticalFetcher{static: vf, o: o}, rawURL, *dispatch, Result{RunID: runID, URL: rawURL}, finish)
 	}
 	// Fetch telemetry rides the run row next to LLM usage; warn-only,
 	// never fails the page. The proxy entry that served (redacted
@@ -272,12 +295,14 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 		Scope: o.Scope, StatusCode: page.StatusCode,
 		ContentType: page.Headers.Get("Content-Type"),
 	})
-	if err != nil {
+	if err != nil || cleaned.Quality != clean.IssueNone {
+		if dispatch != nil {
+			return runVertical(ctx, verticalFetcher{static: vf, o: o}, rawURL, *dispatch, Result{RunID: runID, URL: rawURL}, finish)
+		}
 		finish(0, 1, "error")
-		return Result{}, err
-	}
-	if cleaned.Quality != clean.IssueNone {
-		finish(0, 1, "error")
+		if err != nil {
+			return Result{}, err
+		}
 		return Result{}, &clean.QualityError{Issue: cleaned.Quality, URL: rawURL}
 	}
 	base := Result{RunID: runID, URL: page.URL, FinalURL: cleaned.FinalURL, Title: cleaned.Title,
@@ -295,18 +320,8 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 		base.Rendered = rendered
 	}
 
-	if explicit != nil {
-		// ^ --list ships in Phase C; the message names it anyway so the string never changes.
-		if u, err := url.Parse(rawURL); err != nil || !explicit.Match(u) {
-			finish(0, 1, "error")
-			return Result{}, fmt.Errorf("scrape: vertical %q: %w for %s", o.Vertical, vertical.ErrURLMismatch, rawURL)
-		}
-		return runVertical(ctx, vf, rawURL, *explicit, base, finish)
-	}
-	if o.Vertical == "auto" {
-		if ex, ok := vertical.MatchURL(rawURL); ok {
-			return runVertical(ctx, vf, rawURL, ex, base, finish)
-		}
+	if dispatch != nil {
+		return runVertical(ctx, verticalFetcher{static: vf, o: o}, rawURL, *dispatch, base, finish)
 	}
 
 	// No schema → markdown only, no LLM.
@@ -364,11 +379,42 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 	return base, nil
 }
 
-// runVertical runs one zero-LLM extractor: default headers only (profiles
-// exist for challenge-prone HTML pages, not registry APIs), no selector
-// cache interaction (vertical output isn't selector-derived; caching it
-// would poison schema-keyed lookups), no LLM. Extractor errors are hard
-// errors — never a silent LLM fallback.
+// verticalFetcher wraps the static fetcher with the main path's G.2
+// semantics for extractors' own fetches: a typed challenge gets exactly
+// one rod escalation (a real browser often clears it; honor o.CDP). The
+// typed error stays primary when the browser can't clear it — launch
+// noise never masks the vendor. Zero-value browser is fetchBrowser;
+// tests inject a fake via the browser field.
+type verticalFetcher struct {
+	static  vertical.Fetcher
+	o       Options
+	browser func(ctx context.Context, rawURL string, o Options) (*fetch.FetchResponse, error)
+}
+
+func (f verticalFetcher) Fetch(ctx context.Context, req fetch.FetchRequest) (*fetch.FetchResponse, error) {
+	resp, err := f.static.Fetch(ctx, req)
+	if err == nil {
+		return resp, nil
+	}
+	var ce *fetch.ChallengeError
+	if !errors.As(err, &ce) {
+		return nil, err
+	}
+	browser := f.browser
+	if browser == nil {
+		browser = fetchBrowser
+	}
+	if bresp, berr := browser(ctx, req.URL, f.o); berr == nil {
+		return bresp, nil
+	}
+	return nil, err
+}
+
+// runVertical runs one zero-LLM extractor over a challenge-escalating
+// fetcher (profiles exist for challenge-prone HTML pages, not registry
+// APIs). No selector cache interaction (vertical output isn't
+// selector-derived; caching it would poison schema-keyed lookups), no
+// LLM. Extractor errors are hard errors — never a silent LLM fallback.
 func runVertical(ctx context.Context, vf vertical.Fetcher, rawURL string, ex vertical.Extractor, base Result, finish func(ok, er int, status string)) (Result, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {

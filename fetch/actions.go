@@ -136,13 +136,9 @@ func (r *RodFetcher) FetchWithActions(ctx context.Context, req FetchRequest, act
 		}
 		caps = &xhrCollector{patterns: patterns}
 	}
-	page, err := r.openPage(cctx, req, caps) // event consumer starts inside, pre-navigation
+	page, err := r.openLoadedPage(cctx, req, caps, nil)
 	if err != nil {
 		return nil, err
-	}
-	if err := page.WaitLoad(); err != nil {
-		_ = page.Close() //nolint:errcheck // error path; teardown failure unactionable
-		return nil, fmt.Errorf("fetch: wait load: %w", err)
 	}
 	if err := runActions(cctx, page, acts); err != nil {
 		_ = page.Close() //nolint:errcheck // error path; teardown failure unactionable
@@ -172,8 +168,7 @@ func (r *RodFetcher) FetchWithActions(ctx context.Context, req FetchRequest, act
 // XHR capture (between creation and navigation — early responses must be
 // seen), then navigates. One create-then-navigate shape for both lang
 // paths: the blank-page round trip is sub-ms next to the fixed 2s settle.
-func (r *RodFetcher) openPage(cctx context.Context, req FetchRequest, caps *xhrCollector) (*rod.Page, error) {
-	page, err := r.browser.Context(cctx).Page(proto.TargetCreateTarget{})
+func (r *RodFetcher) openPage(cctx context.Context, req FetchRequest, caps *xhrCollector) (*rod.Page, error) {	page, err := r.browser.Context(cctx).Page(proto.TargetCreateTarget{})
 	if err != nil {
 		return nil, fmt.Errorf("fetch: open page: %w", err)
 	}
@@ -190,6 +185,54 @@ func (r *RodFetcher) openPage(cctx context.Context, req FetchRequest, caps *xhrC
 	if err := page.Navigate(req.URL); err != nil {
 		_ = page.Close() //nolint:errcheck // error path; teardown failure unactionable
 		return nil, fmt.Errorf("fetch: navigate: %w", err)
+	}
+	return page, nil
+}
+
+// navRetryable reports the WaitLoad navigation race: the page JS-redirected
+// mid-load (consent walls, auth bounces), destroying the execution context
+// rod was waiting on. A fresh navigation usually clears it; budget timeouts
+// and real failures are not retryable.
+func navRetryable(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "execution context was destroyed")
+}
+
+// openLoadedPage navigates and waits for load. prepare runs post-open,
+// pre-wait (the viewport override). A retryable WaitLoad race gets exactly
+// one fresh navigation; every other error surfaces as-is. The event
+// consumer starts inside openPage, pre-navigation, on every attempt.
+func (r *RodFetcher) openLoadedPage(cctx context.Context, req FetchRequest, caps *xhrCollector, prepare func(*rod.Page) error) (*rod.Page, error) {
+	page, err := r.openPage(cctx, req, caps)
+	if err != nil {
+		return nil, err
+	}
+	if prepare != nil {
+		if err := prepare(page); err != nil {
+			_ = page.Close() //nolint:errcheck // error path; teardown failure unactionable
+			return nil, err
+		}
+	}
+	werr := page.WaitLoad()
+	if werr == nil {
+		return page, nil
+	}
+	_ = page.Close() //nolint:errcheck // error path; teardown failure unactionable
+	if !navRetryable(werr) {
+		return nil, fmt.Errorf("fetch: wait load: %w", werr)
+	}
+	page, err = r.openPage(cctx, req, caps)
+	if err != nil {
+		return nil, fmt.Errorf("fetch: wait load: %w", werr)
+	}
+	if prepare != nil {
+		if err := prepare(page); err != nil {
+			_ = page.Close() //nolint:errcheck // error path; teardown failure unactionable
+			return nil, fmt.Errorf("fetch: wait load: %w", werr)
+		}
+	}
+	if err := page.WaitLoad(); err != nil {
+		_ = page.Close() //nolint:errcheck // error path; teardown failure unactionable
+		return nil, fmt.Errorf("fetch: wait load: %w", err)
 	}
 	return page, nil
 }
@@ -271,19 +314,16 @@ func (r *RodFetcher) screenshot(ctx context.Context, rawURL string, width, heigh
 	}
 	cctx, cancel := context.WithTimeout(ctx, screenshotBudget)
 	defer cancel()
-	page, err := r.openPage(cctx, FetchRequest{URL: rawURL}, nil)
+	page, err := r.openLoadedPage(cctx, FetchRequest{URL: rawURL}, nil, func(p *rod.Page) error {
+		if width > 0 && height > 0 {
+			return p.SetViewport(&proto.EmulationSetDeviceMetricsOverride{Width: width, Height: height})
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = page.Close() }() //nolint:errcheck // page teardown; failure unactionable
-	if width > 0 && height > 0 {
-		if err := page.SetViewport(&proto.EmulationSetDeviceMetricsOverride{Width: width, Height: height}); err != nil {
-			return nil, fmt.Errorf("fetch: viewport: %w", err)
-		}
-	}
-	if err := page.WaitLoad(); err != nil {
-		return nil, fmt.Errorf("fetch: wait load: %w", err)
-	}
 	if err := runActions(cctx, page, acts); err != nil {
 		return nil, err
 	}
