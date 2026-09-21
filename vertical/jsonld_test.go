@@ -22,7 +22,7 @@ func ldJSON(t *testing.T, inner string) []byte {
 func TestBlocksOfType_SidecarPath(t *testing.T) {
 	t.Parallel()
 	html := ldJSON(t, `{"@context":"https://schema.org","@type":"JobPosting","title":"A"}`)
-	blocks := blocksOfType(html, "JobPosting")
+	blocks := blocksOfTypes(html, "JobPosting")
 	if len(blocks) != 1 {
 		t.Fatalf("blocksOfType = %d blocks, want 1", len(blocks))
 	}
@@ -79,7 +79,7 @@ func TestBlocksOfType_MalformedSkipped(t *testing.T) {
 	// Balanced-but-invalid fragment is skipped; the good block survives
 	// (scan continues — never fatal on malformed JSON-LD).
 	html := ldJSON(t, `{"a" 1},{"@type":"JobPosting","title":"Good"}`)
-	blocks := blocksOfType(html, "JobPosting")
+	blocks := blocksOfTypes(html, "JobPosting")
 	if len(blocks) != 1 {
 		t.Fatalf("blocksOfType = %d blocks, want 1 (malformed skipped)", len(blocks))
 	}

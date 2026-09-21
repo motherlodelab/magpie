@@ -1,7 +1,6 @@
 package vertical_test
 
 import (
-	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -36,12 +35,6 @@ func TestLocalBusinessExtract(t *testing.T) {
 	}
 	if !reflect.DeepEqual(rec, want) {
 		t.Errorf("got %#v\nwant %#v", rec, want)
-	}
-	geo := rec["geo"].(map[string]any)
-	for k, wantN := range map[string]float64{"lat": 13.7307, "lng": 100.5589} {
-		if got, _ := geo[k].(float64); math.Abs(got-wantN) > 1e-9 {
-			t.Errorf("geo.%s = %v, want %v", k, got, wantN)
-		}
 	}
 }
 

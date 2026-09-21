@@ -1,6 +1,7 @@
 package vertical
 
 import (
+	"bytes"
 	"context"
 	"encoding/xml"
 	"fmt"
@@ -39,14 +40,14 @@ const rssItemCap = 50
 
 type rssDoc struct {
 	Channel struct {
-		Title       string `xml:"title"`
-		Link        string `xml:"link"`
-		Description string `xml:"description"`
+		Title       string   `xml:"title"`
+		Links       []string `xml:"link"` // plain <link> plus namespaced atom:link copies; first non-empty wins
+		Description string   `xml:"description"`
 		Items       []struct {
-			Title       string `xml:"title"`
-			Link        string `xml:"link"`
-			PubDate     string `xml:"pubDate"`
-			Description string `xml:"description"`
+			Title       string   `xml:"title"`
+			Links       []string `xml:"link"`
+			PubDate     string   `xml:"pubDate"`
+			Description string   `xml:"description"`
 		} `xml:"item"`
 	} `xml:"channel"`
 }
@@ -90,13 +91,25 @@ func atomLinkHref(links []atomLink) string {
 	return anyRel
 }
 
+// firstNonEmpty returns the first non-empty string. RSS <link> fields
+// collect namespaced copies (e.g. <atom:link rel="self">, which decodes
+// as empty chardata and would overwrite a plain string field).
+func firstNonEmpty(vals []string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 func extractRSS(ctx context.Context, f Fetcher, u *url.URL) (map[string]any, error) {
 	body, err := fetchBytes(ctx, f, u.String())
 	if err != nil {
 		return nil, err
 	}
 	items := make([]any, 0, rssItemCap)
-	rec := map[string]any{"items": items} // never nil, even for empty feeds
+	rec := map[string]any{}
 	switch rootElement(body) {
 	case "rss":
 		var doc rssDoc
@@ -106,7 +119,7 @@ func extractRSS(ctx context.Context, f Fetcher, u *url.URL) (map[string]any, err
 		if v := strings.TrimSpace(doc.Channel.Title); v != "" {
 			rec["title"] = v
 		}
-		if v := strings.TrimSpace(doc.Channel.Link); v != "" {
+		if v := firstNonEmpty(doc.Channel.Links); v != "" {
 			rec["link"] = v
 		}
 		if v := strings.TrimSpace(doc.Channel.Description); v != "" {
@@ -116,7 +129,7 @@ func extractRSS(ctx context.Context, f Fetcher, u *url.URL) (map[string]any, err
 			if len(items) == rssItemCap {
 				break
 			}
-			if m := feedItem(it.Title, it.Link, it.PubDate, it.Description); m != nil {
+			if m := feedItem(it.Title, firstNonEmpty(it.Links), it.PubDate, it.Description); m != nil {
 				items = append(items, m)
 			}
 		}
@@ -175,24 +188,18 @@ func feedItem(title, link, published, summary string) map[string]any {
 	return m
 }
 
-// rootElement returns the first XML element name, skipping the prolog,
-// comments and doctype — the rss-vs-feed dialect sniff.
+// rootElement returns the first XML start-element local name — the
+// rss-vs-feed dialect sniff. The stdlib decoder handles the prolog,
+// comments and doctype (including '>' inside them).
 func rootElement(body []byte) string {
-	for i := 0; i+1 < len(body); i++ {
-		if body[i] != '<' {
-			continue
+	dec := xml.NewDecoder(bytes.NewReader(body))
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return ""
 		}
-		if c := body[i+1]; c == '?' || c == '!' {
-			for ; i < len(body) && body[i] != '>'; i++ { // skip to prolog end
-			}
-			continue
-		}
-		for j := i + 1; j < len(body); j++ {
-			switch body[j] {
-			case '>', ' ', '\t', '\n', '\r', '/':
-				return string(body[i+1 : j])
-			}
+		if se, ok := tok.(xml.StartElement); ok {
+			return se.Name.Local
 		}
 	}
-	return ""
 }

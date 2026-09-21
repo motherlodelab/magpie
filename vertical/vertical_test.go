@@ -329,3 +329,17 @@ func TestStaticFetcher_UserAgent(t *testing.T) {
 		t.Errorf("User-Agent = %q, want magpie UA", observed)
 	}
 }
+
+// extractInline serves an inline JSON-LD literal through the fake
+// fetcher; shared by the events/business/article variant tables.
+func extractInline(t *testing.T, ex vertical.Extractor, host, jsonld string) map[string]any {
+	t.Helper()
+	fx := &fakeVerticalFetcher{bodies: map[string]fakeResp{
+		host: {body: []byte(`<html><head><script type="application/ld+json">` + jsonld + `</script></head></html>`)},
+	}}
+	rec, err := ex.Extract(t.Context(), fx, mustURL(t, "https://"+host+"/x"))
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	return rec
+}

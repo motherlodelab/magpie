@@ -98,6 +98,19 @@ func TestJobPostingExtract_Variants(t *testing.T) {
 					t.Error("currency present on number salary — omission broken")
 				}
 			}},
+		{"nested number value", `{"@type":"JobPosting","title":"X","baseSalary":{"currency":"USD","value":85000}}`,
+			func(t *testing.T, rec map[string]any) {
+				s, ok := rec["salary"].(map[string]any)
+				if !ok {
+					t.Fatalf("salary = %#v", rec["salary"])
+				}
+				if v, _ := s["value"].(float64); math.Abs(v-85000) > 1e-9 {
+					t.Errorf("value = %v", v)
+				}
+				if s["currency"] != "USD" {
+					t.Errorf("currency = %v, want USD kept alongside number value", s["currency"])
+				}
+			}},
 		{"scalar location + per-place telecommute", `{"@type":"JobPosting","title":"X","jobLocation":{"@type":"Place","jobLocationType":"TELECOMMUTE","address":{"addressLocality":"Remote"}}}`,
 			func(t *testing.T, rec map[string]any) {
 				if rec["remote"] != true {

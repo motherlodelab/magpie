@@ -3,7 +3,6 @@ package vertical
 import (
 	"bytes"
 	"encoding/json"
-	"net/url"
 	"strings"
 
 	"github.com/motherlodelab/magpie/clean"
@@ -14,16 +13,11 @@ import (
 // JSON-LD block harvesting shared by the standards extractors
 // (ecommerce_product, job_posting, event, local_business, article).
 
-// blocksOfType returns candidate JSON-LD blocks mentioning typ. See
-// blocksOfTypes (the plural form is the real entry point).
-func blocksOfType(html []byte, typ string) []json.RawMessage {
-	return blocksOfTypes(html, typ)
-}
-
-// blocksOfTypes harvests JSON-LD blocks two-stage: clean.HarvestSidecar
-// first; a raw script brace-scan only when the sidecar is absent.
-// Inherited commerce quirk (keep until a real page misses): a page whose
-// sidecar exists but lacks the type is a miss — the fallback never runs.
+// blocksOfTypes returns candidate JSON-LD blocks mentioning any of types.
+// Two-stage: clean.HarvestSidecar first; a raw script brace-scan only when
+// the sidecar is absent. Inherited commerce quirk (keep until a real page
+// misses): a page whose sidecar exists but lacks the type is a miss — the
+// fallback never runs.
 func blocksOfTypes(html []byte, types ...string) []json.RawMessage {
 	sidecar := clean.HarvestSidecar(html)
 	if len(sidecar) != 0 {
@@ -107,12 +101,6 @@ func containsAny(s string, subs []string) bool {
 		}
 	}
 	return false
-}
-
-// matchHTTP is the maximally permissive OptIn matcher shared by the
-// JSON-LD standards extractors: any http(s) URL might carry the block.
-func matchHTTP(u *url.URL) bool {
-	return u.Scheme == "http" || u.Scheme == "https"
 }
 
 // blockArray normalizes a JSON-LD value that may be a single object or an

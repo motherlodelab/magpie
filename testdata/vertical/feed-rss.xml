@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0">
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
   <channel>
     <title>Example Blog</title>
     <link>https://blog.example/</link>
+    <!-- real-world pattern (WordPress/hnrss): the namespaced copy decodes
+         as empty chardata AFTER <link> and would blank a string field -->
+    <atom:link href="https://blog.example/feed.xml" rel="self" type="application/rss+xml"/>
     <description>Mostly scrapers</description>
     <item>
       <title>RSS item one</title>

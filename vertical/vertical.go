@@ -158,21 +158,29 @@ func str(m map[string]any, keys ...string) string {
 // num picks a numeric field as float64; strings parse, anything else is 0.
 func num(m map[string]any, keys ...string) float64 {
 	for _, k := range keys {
-		switch v := m[k].(type) {
-		case float64:
-			return v
-		case int:
-			return float64(v)
-		case int64:
-			return float64(v)
-		case json.Number:
-			if f, err := v.Float64(); err == nil {
-				return f
-			}
-		case string:
-			if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
-				return f
-			}
+		if n := numVal(m[k]); n != 0 {
+			return n
+		}
+	}
+	return 0
+}
+
+// numVal coerces a decoded JSON value to float64 (0 when not numeric).
+func numVal(v any) float64 {
+	switch v := v.(type) {
+	case float64:
+		return v
+	case int:
+		return float64(v)
+	case int64:
+		return float64(v)
+	case json.Number:
+		if f, err := v.Float64(); err == nil {
+			return f
+		}
+	case string:
+		if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+			return f
 		}
 	}
 	return 0
@@ -199,6 +207,12 @@ func firstJSONArray(body []byte) (map[string]any, error) {
 func anyMap(v any) map[string]any {
 	m, _ := v.(map[string]any)
 	return m
+}
+
+// matchHTTP is the maximally permissive OptIn matcher shared by the
+// JSON-LD standards extractors: any http(s) URL might carry the block.
+func matchHTTP(u *url.URL) bool {
+	return u.Scheme == "http" || u.Scheme == "https"
 }
 
 // hostIs folds the URL host for canonical-host checks.

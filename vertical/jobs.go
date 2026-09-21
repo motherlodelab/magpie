@@ -97,13 +97,13 @@ func extractJobPosting(ctx context.Context, f Fetcher, u *url.URL) (map[string]a
 	return rec, nil
 }
 
-// salaryMap normalizes baseSalary: a QuantitativeValue (optionally nested
-// under "value", per MonetaryAmount) or a bare number.
+// salaryMap normalizes baseSalary: a QuantitativeValue nested under
+// "value" (MonetaryAmount), directly on the object, or bare numbers in
+// either slot.
 func salaryMap(v any) map[string]any {
 	b := anyMap(v)
 	if b == nil {
-		// bare number salary: {"value": n} only — no currency to guess.
-		if n := num(map[string]any{"v": v}, "v"); n != 0 {
+		if n := numVal(v); n != 0 {
 			return map[string]any{"value": n}
 		}
 		return nil
@@ -121,6 +121,9 @@ func salaryMap(v any) map[string]any {
 	}
 	if u := str(qv, "unitText"); u != "" {
 		out["unit"] = u
+	}
+	if n := numVal(b["value"]); n != 0 { // "value" as a bare number
+		out["value"] = n
 	}
 	if c := str(b, "currency"); c != "" {
 		out["currency"] = c
