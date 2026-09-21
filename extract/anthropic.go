@@ -88,7 +88,7 @@ func (a *AnthropicAdapter) promptOnce(ctx context.Context, system, user string, 
 	for k, v := range a.ExtraHeaders {
 		headers[k] = v
 	}
-	out, err := postJSON(ctx, a.BaseURL+"/v1/messages", headers, body)
+	out, err := postJSON(ctx, endpointURL(a.BaseURL, "/v1/messages"), headers, body)
 	if err != nil {
 		return "", TokenUsage{}, err
 	}
