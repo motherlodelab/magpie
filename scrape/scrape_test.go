@@ -485,3 +485,32 @@ func TestScrape_ScreenshotValidation(t *testing.T) {
 		t.Errorf("Run err = %v, want OptionsError", err)
 	}
 }
+
+// TestRun_HeadersDeliveredStatic — M0a E2E: run headers ride the static
+// fetch all the way to the origin, winning over the profile bundle
+// (inline echo — scrape_test can't see fetch_test's helpers).
+func TestRun_HeadersDeliveredStatic(t *testing.T) {
+	var got http.Header
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(scrapeHTML)) //nolint:errcheck // httptest local
+	}))
+	t.Cleanup(origin.Close)
+
+	db := openScrapeDB(t)
+	_, err := scrape.Run(context.Background(), fakeDeps(db, nil, ""), origin.URL, scrape.Options{
+		Render:  "static",
+		Profile: "chrome",
+		Headers: []string{"Authorization: Bearer tok", "Accept-Language: de-DE"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Get("Authorization") != "Bearer tok" {
+		t.Errorf("Authorization = %q, want Bearer tok", got.Get("Authorization"))
+	}
+	if got.Get("Accept-Language") != "de-DE" {
+		t.Errorf("Accept-Language = %q, want the run header to beat the profile bundle", got.Get("Accept-Language"))
+	}
+}

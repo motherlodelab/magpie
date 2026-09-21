@@ -157,6 +157,48 @@ func TestValidateOptions_LangControlChars(t *testing.T) {
 	}
 }
 
+// TestValidateOptions_HeaderControlChars — M0a: a run header crosses
+// into a raw HTTP header line, so CRLF there is header injection.
+// Same contract as Lang: rejected pre-I/O (zero bytes on the wire),
+// message names the offending 1-based header index.
+func TestValidateOptions_HeaderControlChars(t *testing.T) {
+	for _, bad := range []string{"X-A: v\r\nX-Evil: 1", "X\r-A: v", "X-A: v\x00", "\n: v"} {
+		err := ValidateOptions(Options{Headers: []string{bad}})
+		var oe *OptionsError
+		if !errors.As(err, &oe) {
+			t.Fatalf("header %q: err = %v, want *OptionsError", bad, err)
+		}
+		for _, want := range []string{"header", "control characters"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("header %q: err %q missing %q", bad, err, want)
+			}
+		}
+	}
+	// The index names the offending header, not the first.
+	err := ValidateOptions(Options{Headers: []string{"X-Ok: 1", "X-Bad: v\n"}})
+	if err == nil || !strings.Contains(err.Error(), "header 2") {
+		t.Errorf("err = %v, want header index 2 named", err)
+	}
+	// Shape: a header line without "Name: value" is rejected too.
+	for _, bad := range []string{": novalue", "NoColonAtAll", "   : v"} {
+		err := ValidateOptions(Options{Headers: []string{bad}})
+		var oe *OptionsError
+		if !errors.As(err, &oe) || !strings.Contains(err.Error(), "Name: value") {
+			t.Errorf("header %q: err = %v, want shape error", bad, err)
+		}
+	}
+	// Real auth headers must pass; combos with other options stay valid.
+	for _, ok := range [][]string{
+		{"Authorization: Bearer x"},
+		{"X-CSRF-Token: a:b c"},
+		{"Authorization: Bearer x", "X-Request-Id: 42"},
+	} {
+		if err := ValidateOptions(Options{Profile: "chrome", Headers: ok}); err != nil {
+			t.Errorf("headers %v: %v", ok, err)
+		}
+	}
+}
+
 // TestValidateOptions_CaptureXHR — Phase J: bad regexps surface pre-I/O
 // (exit 2), and capture-xhr with render=static is rejected with the
 // house wording (mirrors screenshot/actions).

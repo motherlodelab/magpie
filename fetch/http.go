@@ -312,6 +312,14 @@ func (s *StaticFetcher) do(ctx context.Context, req FetchRequest) (*FetchRespons
 	if cookies != "" {
 		hreq.Header.Set("Cookie", cookies)
 	}
+	// Run headers merge LAST — the caller wins over the profile bundle,
+	// Lang, and Cookies (one directional merge; the conflict flip is
+	// pinned by a single test, a matrix would test the stdlib).
+	for _, h := range req.Headers {
+		if name, val, ok := strings.Cut(h, ":"); ok {
+			hreq.Header.Set(strings.TrimSpace(name), strings.TrimSpace(val))
+		}
+	}
 	resp, err := client.Do(hreq)
 	if err != nil {
 		return nil, fmt.Errorf("fetch: %w", err)

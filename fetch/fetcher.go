@@ -17,6 +17,12 @@ type FetchRequest struct {
 	// policing — validation rejects control characters at the options
 	// boundary). Rod sets it as a page-level extra header.
 	Lang string
+	// Headers are raw "Name: value" request headers applied on the
+	// static path AFTER the profile bundle, Lang, and cookies — the
+	// caller wins conflicts. Shape/control-character policing lives at
+	// the options boundary (scrape.ValidateOptions); malformed lines
+	// (no colon) are skipped here.
+	Headers []string
 	// CaptureXHR lists Go regexps; matching XHR/fetch response bodies are
 	// captured into FetchResponse.XHR. Rod-only: static fetchers ignore
 	// this (CLI/MCP reject the combination at the options boundary).

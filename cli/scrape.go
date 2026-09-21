@@ -27,6 +27,7 @@ func newScrapeCmd() *cobra.Command {
 	var actionsFile, lang string
 	var captureXHR []string
 	var cdpURL string
+	var headers []string
 	cmd := &cobra.Command{
 		Use:   "scrape <url>",
 		Short: "Fetch → clean → extract a single URL",
@@ -50,6 +51,7 @@ func newScrapeCmd() *cobra.Command {
 				OnlyMainContent: onlyMainContent, HeaderProfile: headerProfile, Cookies: cookies,
 				Browser: browser, Vertical: verticalName, Viewport: viewport,
 				Actions: actions, Lang: lang,
+				Headers:    headers,
 				CaptureXHR: captureXHR, CDP: cdpURL,
 			})
 		},
@@ -73,6 +75,7 @@ func newScrapeCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&actionLines, "action", nil, "browser action line, repeatable: click <sel> | type <sel> <text…> | scroll <n|top|bottom> | wait <ms> | wait-for <sel> | screenshot <path> | eval-js <expr…>")
 	cmd.Flags().StringVar(&actionsFile, "actions", "", "action file: one action per line, # comments, rest-of-line args need no quoting")
 	cmd.Flags().StringVar(&lang, "lang", "", "Accept-Language header value, e.g. fr-CA,fr;q=0.9 (no control characters)")
+	cmd.Flags().StringSliceVar(&headers, "header", nil, "raw request header, repeatable: \"Name: value\" (no control characters; wins over profile defaults)")
 	cmd.Flags().StringSliceVar(&captureXHR, "capture-xhr", nil, "Go regexp: capture matching XHR/fetch response bodies (repeatable; browser rendering only)")
 	cmd.Flags().StringVar(&cdpURL, "cdp-url", "", "remote browser CDP endpoint (ws://, wss://, http(s)://); overrides MAGPIE_CDP_URL — never launches a local browser")
 	return cmd
@@ -117,6 +120,9 @@ type scrapeOptions struct {
 	// scrape.ValidateOptions (render=static + capture-xhr rejected).
 	CaptureXHR []string
 	CDP        string
+	// Headers are raw "Name: value" request headers (--header,
+	// repeatable); validated pre-I/O by scrape.ValidateOptions.
+	Headers []string
 }
 
 func runScrape(ctx context.Context, rawURL string, o scrapeOptions) error {
@@ -142,6 +148,7 @@ func runScrape(ctx context.Context, rawURL string, o scrapeOptions) error {
 		Render: cfg.Render, PageFormat: o.PageFormat,
 		Browser: o.Browser, Vertical: o.Vertical,
 		Actions: o.Actions, Lang: o.Lang,
+		Headers:    o.Headers,
 		CaptureXHR: o.CaptureXHR, CDP: o.CDP,
 	}); err != nil {
 		return err
@@ -178,6 +185,7 @@ func runScrape(ctx context.Context, rawURL string, o scrapeOptions) error {
 		Profile:    o.HeaderProfile, Cookies: o.Cookies, Browser: o.Browser,
 		Vertical: o.Vertical, Viewport: o.Viewport,
 		Actions: o.Actions, Lang: o.Lang,
+		Headers:    o.Headers,
 		CaptureXHR: o.CaptureXHR, CDP: o.CDP,
 	})
 	if err != nil {
