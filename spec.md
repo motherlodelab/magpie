@@ -698,7 +698,8 @@ magpie cache inspect --domain amazon.fr
   Threads everywhere egress matters: static fetches, rod
   (`--proxy-server`; inline credentials unsupported — Chromium's flag
   grammar has none), screenshot captures, extractor sub-fetches
-  (`verticalFetcher` injects it), and crawl page fetches + rod
+  (`verticalFetcher` injects it), and crawl page fetches + robots.txt
+  checks (`Checker.UseProxy`, validated once in `newCrawlContext`) + rod
   escalation. The SSRF gauntlet is unchanged: a loopback TARGET via a
   public per-run proxy stays rejected pre-dial (pinned by a
   `proxy_security_test.go` matrix row).
