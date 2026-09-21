@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Scrapers Eat the Web</title>
+<!-- OG/Twitter meta tags are here ON PURPOSE: article must not read them
+     (og_title/og_image/canonical belong to the `og` extractor). -->
+<meta property="og:title" content="OG Title Decoy">
+<meta property="og:image" content="https://cdn.example/og.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="https://decoy.example/canonical">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "NewsArticle",
+  "headline": "Scrapers Eat the Web",
+  "author": [
+    { "@type": "Person", "name": "Ada Lovelace" },
+    { "@type": "Person", "name": "Grace Hopper" }
+  ],
+  "datePublished": "2026-09-18T08:00:00Z",
+  "dateModified": "2026-09-19T09:30:00Z",
+  "publisher": { "@type": "Organization", "name": "The Daily Example" },
+  "image": "https://cdn.example/hero.jpg",
+  "url": "https://decoy.example/article"
+}
+</script>
+</head>
+<body><article><p>Full story text.</p></article></body>
+</html>

@@ -98,6 +98,9 @@ func TestList_ExactNameSet(t *testing.T) {
 		"huggingface": true, "og": true,
 		// Upwork jobs (typed challenge surface; meta contract).
 		"upwork_job": true,
+		// Phase V additions.
+		"job_posting": true, "event": true, "local_business": true,
+		"article": true, "rss": true,
 	}
 	got := map[string]bool{}
 	for _, info := range vertical.List() {
@@ -325,4 +328,18 @@ func TestStaticFetcher_UserAgent(t *testing.T) {
 	if observed != "github.com/motherlodelab/magpie/1.0 (+https://github.com/you/magpie)" {
 		t.Errorf("User-Agent = %q, want magpie UA", observed)
 	}
+}
+
+// extractInline serves an inline JSON-LD literal through the fake
+// fetcher; shared by the events/business/article variant tables.
+func extractInline(t *testing.T, ex vertical.Extractor, host, jsonld string) map[string]any {
+	t.Helper()
+	fx := &fakeVerticalFetcher{bodies: map[string]fakeResp{
+		host: {body: []byte(`<html><head><script type="application/ld+json">` + jsonld + `</script></head></html>`)},
+	}}
+	rec, err := ex.Extract(t.Context(), fx, mustURL(t, "https://"+host+"/x"))
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	return rec
 }
