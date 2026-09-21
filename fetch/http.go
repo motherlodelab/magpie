@@ -89,6 +89,14 @@ func guardedDialFunc(o SSRFOptions, dialer *net.Dialer) func(ctx context.Context
 			host = h
 		}
 		proxied := proxiedForHost(host)
+		// A per-run proxy override (FetchRequest.Proxy) rides the request
+		// context into this dial: the peer IS the operator-chosen proxy,
+		// so it gets the pool entry's trusted-egress decision (the Tor
+		// loopback pattern must not depend on the env pool). The TARGET's
+		// own ValidateURL check is unaffected — proxy ≠ license.
+		if requestProxyFrom(ctx) != nil {
+			proxied = true
+		}
 		if !dialPeerAllowed(conn.RemoteAddr(), o, proxied) {
 			_ = conn.Close() //nolint:errcheck // rejection path; close error unactionable
 			return nil, ssrfErr("fetch: dial peer %s is not a public address (DNS rebind?)", conn.RemoteAddr())
@@ -130,7 +138,7 @@ func addrIP(addr net.Addr) (netip.Addr, bool) {
 // response surfacing (an override pick has no pool to report failures
 // against — p is nil — so cooldowns never touch the shared pool).
 func proxyFunc(req *http.Request) (*url.URL, error) {
-	if u, ok := req.Context().Value(requestProxyKey{}).(*url.URL); ok && u != nil {
+	if u := requestProxyFrom(req.Context()); u != nil {
 		if ref := pickRefFrom(req.Context()); ref != nil {
 			ref.set(nil, 0, u)
 		}

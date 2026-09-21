@@ -232,6 +232,34 @@ func TestProxy_SecurityMatrix(t *testing.T) {
 		}
 	})
 
+	t.Run("request-level tor socks5 / public target served", func(t *testing.T) {
+		// Batch B's load-bearing row: the Tor loopback pattern via the
+		// PER-RUN seam must work under STRICT options — the override
+		// rides the request context into the dial guard, so the proxy
+		// dial gets the pool entry's trusted-egress decision.
+		var originHits atomic.Int64
+		origin := hitOrigin(t, &originHits, func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte("via tor"))
+		})
+		socks, conns, requested := fakeSOCKS5(t, mustURL(t, origin.URL))
+		t.Setenv("MAGPIE_PROXY", "")
+		t.Setenv("MAGPIE_PROXY_FILE", "")
+		f, err := fetch.NewStaticFetcherWithOptions(fetch.SSRFOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := f.Fetch(t.Context(), fetch.FetchRequest{URL: pubTarget, Proxy: socks})
+		if err != nil {
+			t.Fatalf("request-level loopback proxy must serve public targets: %v", err)
+		}
+		if string(resp.HTML) != "via tor" {
+			t.Errorf("body = %q, want via tor", resp.HTML)
+		}
+		if conns.Load() != 1 || requested.Load() != 1 {
+			t.Errorf("socks conns/requested = %d/%d, want 1/1", conns.Load(), requested.Load())
+		}
+	})
+
 	t.Run("request-level proxy / loopback target still rejected", func(t *testing.T) {
 		// Batch B row: the per-run Proxy seam must re-enter the same
 		// gauntlet — proxy ≠ license, the loopback TARGET stays
