@@ -27,6 +27,8 @@ import (
 	"github.com/motherlodelab/magpie/fetch"
 	"github.com/motherlodelab/magpie/selector"
 	"github.com/motherlodelab/magpie/store"
+
+	"github.com/PuerkitoBio/goquery"
 )
 
 // selectorHash mirrors production's schemaHash for cache assertions.
@@ -1506,5 +1508,244 @@ func TestCrawl_BadProxyPreIO(t *testing.T) {
 	})
 	if err == nil || !errors.Is(err, fetch.ErrProxyConfig) {
 		t.Fatalf("err = %v, want ErrProxyConfig pre-I/O", err)
+	}
+}
+
+// --- Phase R: deterministic element relocation (zero-LLM heal step) ---
+
+func fixtureHTML(t *testing.T, name string) string {
+	t.Helper()
+	raw, err := os.ReadFile("../testdata/selector/" + name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+// relocateSamples builds n old-template (product-A) samples with the
+// truth the pipeline already paid for.
+func relocateSamples(t *testing.T, n int) []selector.SynthSample {
+	t.Helper()
+	html := fixtureHTML(t, "product-A.html")
+	out := make([]selector.SynthSample, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, selector.SynthSample{URL: "http://ex.com/a", HTML: html, Truth: crawlTruth})
+	}
+	return out
+}
+
+// relocateOrigin serves the NEW template (product-B) everywhere, with a
+// seed page at / linking /p1../p11. robots.txt rides the default branch
+// (HTML → allow-all), same as TestCrawl_QualityCountedNotCached. A prose
+// pad (fixture file stays untouched) keeps visible text ≥ 200 chars so
+// the JS-required heuristic never escalates pages to rod — the pads sit
+// outside </main>, so every selector and the buybox parent chain are
+// exactly product-B's.
+func relocateOrigin(t *testing.T, bHTML string) *httptest.Server {
+	t.Helper()
+	var links strings.Builder
+	for i := 1; i <= 11; i++ {
+		fmt.Fprintf(&links, `<a href="/p%d">p%d</a> `, i, i)
+	}
+	pad := "<p>" + strings.Repeat("honest crawlable prose ", 30) + "</p>"
+	bServed := strings.Replace(bHTML, "</body>", pad+"</body>", 1)
+	seed := strings.Replace(bHTML, "</body>", pad+"<nav>"+links.String()+"</nav></body>", 1)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		if r.URL.Path == "/" {
+			_, _ = w.Write([]byte(seed)) //nolint:errcheck // httptest local; short write unactionable
+			return
+		}
+		_, _ = w.Write([]byte(bServed)) //nolint:errcheck // httptest local; short write unactionable
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// runRelocateCrawl pre-seeds the selector cache with doc and runs 12
+// pages of the B template with FetchWorkers 1 (deterministic page order:
+// the trigger fires at exactly page 10 — minEvidence = window/5 = 10).
+// Returns the fake extractor, the run result, the jsonl path, and host.
+func runRelocateCrawl(t *testing.T, db *store.DB, sch *extract.Schema, doc selector.SelectorDoc) (*fakeExtractor, Result, string, string) {
+	t.Helper()
+	srv := relocateOrigin(t, fixtureHTML(t, "product-B.html"))
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := strings.ToLower(u.Host)
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.PutSelectors(host, selectorHash(sch), string(raw), doc.SamplesUsed); err != nil {
+		t.Fatal(err)
+	}
+	fx := &fakeExtractor{script: map[string]map[string]any{"default": crawlTruth}}
+	out := filepath.Join(t.TempDir(), "r.jsonl")
+	res, err := Run(context.Background(), Options{
+		SeedURL: srv.URL + "/", Schema: sch,
+		MaxPages: 12, MaxDepth: 1, SameHost: true,
+		FetchWorkers: 1, Rate: 1000, Format: "jsonl", Out: out,
+		DB: db, Extractor: fx,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	return fx, res, out, host
+}
+
+// assertRelocatedRecords reads the jsonl the run wrote and checks every
+// record carries the real price.
+func assertRelocatedRecords(t *testing.T, res Result, out string) {
+	t.Helper()
+	f, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := strings.Split(strings.TrimSpace(string(f)), "\n")
+	if len(rows) != 12 {
+		t.Fatalf("jsonl rows = %d, want 12", len(rows))
+	}
+	if res.Records != 12 {
+		t.Errorf("records = %d, want 12", res.Records)
+	}
+	for i, line := range rows {
+		var row struct {
+			Extracted map[string]any `json:"extracted"`
+		}
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			t.Fatalf("row %d: %v", i, err)
+		}
+		if got := row.Extracted["price"]; got != 12.99 {
+			t.Errorf("row %d price = %v, want 12.99", i, got)
+		}
+	}
+}
+
+func TestCrawl_HealRelocationZeroLLM(t *testing.T) {
+	sch := mustTestSchema(t)
+	db := openCrawlDB(t)
+
+	// Pre-seed with a doc synthesized from the OLD template; fingerprints
+	// ride along (the store round-trip's entry point).
+	doc, err := selector.Synthesize(context.Background(), relocateSamples(t, 3), sch, nil, nil)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	if doc.EngineVersion != 2 {
+		t.Fatalf("EngineVersion = %d, want 2", doc.EngineVersion)
+	}
+	fx, res, out, host := runRelocateCrawl(t, db, sch, doc)
+
+	if fx.count("synth") != 0 {
+		t.Errorf("synth calls = %d, want 0 (relocation must cover the heal)", fx.count("synth"))
+	}
+	if fx.count("extract") != 10 {
+		t.Errorf("extract fills = %d, want 10 (fills stop at the trigger)", fx.count("extract"))
+	}
+	assertRelocatedRecords(t, res, out)
+
+	// Persisted doc: relocated selector + fingerprint, maps in sync.
+	raw2, found, err := db.GetSelectors(host, selectorHash(sch))
+	if err != nil || !found {
+		t.Fatalf("GetSelectors: found=%v err=%v", found, err)
+	}
+	var cached selector.SelectorDoc
+	if err := json.Unmarshal([]byte(raw2), &cached); err != nil {
+		t.Fatal(err)
+	}
+	if cached.EngineVersion != 2 {
+		t.Errorf("cached EngineVersion = %d, want 2", cached.EngineVersion)
+	}
+	if cached.Fingerprints["price"].ID != "cost-now" {
+		t.Errorf("fingerprint ID = %q, want cost-now", cached.Fingerprints["price"].ID)
+	}
+	bdoc, err := goquery.NewDocumentFromReader(strings.NewReader(fixtureHTML(t, "product-B.html")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, found := selector.ExtractFieldValue(bdoc, nil, "price", cached.Fields["price"], sch.Hints)
+	if !found || selector.CanonicalJSON(got) != selector.CanonicalJSON(12.99) {
+		t.Errorf("cached price selector %q extracts %v on product-B", cached.Fields["price"].Expr, got)
+	}
+	for f := range cached.Fingerprints {
+		if _, ok := cached.Fields[f]; !ok {
+			t.Errorf("orphan fingerprint %q (map-sync invariant)", f)
+		}
+	}
+}
+
+func TestCrawl_HealRelocationDeclinesOldDoc(t *testing.T) {
+	sch := mustTestSchema(t)
+	doc, err := selector.Synthesize(context.Background(), relocateSamples(t, 3), sch, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc.Fingerprints = nil // EngineVersion-1-era doc: the upgrade must be invisible
+
+	fx, res, out, _ := runRelocateCrawl(t, openCrawlDB(t), sch, doc)
+
+	// Exactly one heal synth — today's path, no double-handling.
+	if fx.count("synth") != 1 {
+		t.Errorf("synth calls = %d, want exactly 1 (the existing heal synth)", fx.count("synth"))
+	}
+	if fx.count("extract") < 10 {
+		t.Errorf("extract fills = %d, want ≥ 10", fx.count("extract"))
+	}
+	assertRelocatedRecords(t, res, out)
+}
+
+func TestTryRelocate_SkipsJSONLDAndMultiple(t *testing.T) {
+	sch, err := extract.ParseSchema([]byte(`$schema: "https://json-schema.org/draft/2020-12/schema"
+type: object
+additionalProperties: false
+required: [price]
+properties:
+  price: {type: number, x-magpie: {coerce: "eur_decimal"}}
+  ean: {type: string, x-magpie: {jsonld_path: "$.gtin13"}}
+  gallery: {type: array, x-magpie: {multiple: true}}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &crawlContext{db: openCrawlDB(t), opts: Options{Schema: sch}, schemaHash: selector.SchemaHash(sch)}
+	h := selector.NewHealer(50, 0.30, 3)
+	aHTML := fixtureHTML(t, "product-A.html")
+	for i := 0; i < 2; i++ { // old template: #price still works everywhere
+		h.Retain(selector.SynthSample{URL: "http://ex.com/a", HTML: aHTML, Truth: crawlTruth})
+	}
+	st := &domainState{healer: h, doc: selector.SelectorDoc{
+		Fields: map[string]selector.FieldSelector{
+			"price":   {Type: "css", Expr: "#price"},
+			"ean":     {Type: "jsonld", Expr: "$.gtin13"},
+			"gallery": {Type: "css", Expr: ".shot"},
+		},
+		Fingerprints: map[string]selector.ElementFP{
+			"price":   {Tag: "span", ID: "price", NumText: true},
+			"ean":     {Tag: "script"},
+			"gallery": {Tag: "img"},
+		},
+		EngineVersion: 2,
+	}}
+	before, err := json.Marshal(st.doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := c.tryRelocate(st, "ex.com", []string{"price", "ean", "gallery"})
+	if len(got) != 3 || got[0] != "price" || got[1] != "ean" || got[2] != "gallery" {
+		t.Errorf("tryRelocate = %v, want all three (jsonld/Multiple skipped, price declines)", got)
+	}
+	after, err := json.Marshal(st.doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Error("doc mutated despite nothing relocating")
+	}
+	if _, found, err := c.db.GetSelectors("ex.com", c.schemaHash); err != nil || found {
+		t.Errorf("selectors persisted despite nothing relocating (found=%v err=%v)", found, err)
 	}
 }
