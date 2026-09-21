@@ -98,6 +98,9 @@ func TestList_ExactNameSet(t *testing.T) {
 		"huggingface": true, "og": true,
 		// Upwork jobs (typed challenge surface; meta contract).
 		"upwork_job": true,
+		// Phase V additions.
+		"job_posting": true, "event": true, "local_business": true,
+		"article": true, "rss": true,
 	}
 	got := map[string]bool{}
 	for _, info := range vertical.List() {

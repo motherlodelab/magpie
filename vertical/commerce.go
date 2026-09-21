@@ -1,16 +1,10 @@
 package vertical
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
-
-	"github.com/motherlodelab/magpie/clean"
-
-	"github.com/PuerkitoBio/goquery"
 )
 
 func init() {
@@ -99,74 +93,10 @@ func extractEcommerce(ctx context.Context, f Fetcher, u *url.URL) (map[string]an
 	if err != nil {
 		return nil, err
 	}
-	sidecar := clean.HarvestSidecar(body)
-	blocks := productBlocks(sidecar)
-	if len(sidecar) == 0 {
-		// HarvestSidecar misses non-ld JSON-LD spellings (case/whitespace
-		// variants); scan the raw HTML for @type Product blocks directly.
-		blocks = scanProductBlocks(body)
-	}
-	for _, block := range blocks {
-		var m map[string]any
-		if err := json.Unmarshal(block, &m); err != nil || !isProductType(m["@type"]) {
-			continue
-		}
+	if m, ok := firstTypedBlock(body, "Product"); ok {
 		return productMap(m, u.String()), nil
 	}
 	return nil, fmt.Errorf("vertical: ecommerce: no product data at %s", u.String())
-}
-
-// productBlocks normalizes HarvestSidecar's array-or-single output shape
-// into a plain list.
-func productBlocks(sidecar []byte) []json.RawMessage {
-	if len(sidecar) == 0 {
-		return nil
-	}
-	var arr []json.RawMessage
-	if err := json.Unmarshal(sidecar, &arr); err == nil {
-		return arr
-	}
-	var single json.RawMessage
-	if err := json.Unmarshal(sidecar, &single); err == nil {
-		return []json.RawMessage{single}
-	}
-	return nil
-}
-
-// scanProductBlocks is the fallback for JSON-LD the goquery harvest missed:
-// it extracts balanced-brace objects containing a Product @type marker.
-func scanProductBlocks(html []byte) []json.RawMessage {
-	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(html))
-	if err != nil {
-		return nil
-	}
-	var blocks []json.RawMessage
-	doc.Find("script").Each(func(_ int, s *goquery.Selection) {
-		t := strings.TrimSpace(s.Text())
-		if t == "" || !strings.Contains(t, "Product") {
-			return
-		}
-		for _, frag := range clean.BraceObjects(t) {
-			if json.Valid([]byte(frag)) && strings.Contains(frag, "Product") {
-				blocks = append(blocks, json.RawMessage(frag))
-			}
-		}
-	})
-	return blocks
-}
-
-func isProductType(t any) bool {
-	switch v := t.(type) {
-	case string:
-		return strings.Contains(v, "Product")
-	case []any:
-		for _, e := range v {
-			if s, _ := e.(string); strings.Contains(s, "Product") {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func productMap(m map[string]any, pageURL string) map[string]any {

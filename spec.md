@@ -749,18 +749,30 @@ magpie cache inspect --domain amazon.fr
   boundary). No `--country` flag: a country implies IP geo, which is
   already expressible as a proxy-pool entry; a fake knob would silently
   do nothing on direct connections.
-- **Vertical breadth:** `stackoverflow` (SE API, `filter=withbody`),
+- **Vertical breadth (Phase V):** the registry is **21 extractors**, now
+  covering the schema.org standards wave — `job_posting` (JobPosting
+  JSON-LD: Greenhouse/Lever/Ashby-style boards), `event` (Event +
+  subtypes, online/physical disambiguation), `local_business`
+  (LocalBusiness + subtypes, address/geo/hours), `article`
+  (Article/NewsArticle/BlogPosting) and `rss` (RSS 2.0 + Atom via stdlib
+  XML, capped at 50 items — the fuel for `watch`/`diff`) — alongside the
+  earlier `stackoverflow` (SE API, `filter=withbody`),
   `trustpilot` (embedded JSON-LD via goquery — no JSON-LD is a loud
   error), `dockerhub`, `huggingface` (models carry `pipeline_tag`,
-  datasets omit it), and reddit permalinks now go `.json`-first,
-  emitting nested `comments` trees capped at depth 10 / 200 total (the
-  `more`-object pagination is the upgrade path); the HTML summary shape
-  remains the fallback. `og` is a generic OG/Twitter-meta extractor and
-  is **OptIn by design** (deviation from the competitive analysis):
+  datasets omit it), `upwork_job` (typed challenge surface) and reddit
+  permalinks going `.json`-first, emitting nested `comments` trees capped
+  at depth 10 / 200 total (the `more`-object pagination is the upgrade
+  path); the HTML summary shape remains the fallback. The standards
+  extractors share one JSON-LD block scanner (`vertical/jsonld.go`).
+  `og` — and the entire standards wave — are **OptIn by design**
+  (deviation from the competitive analysis):
   our contract guarantees permissives never auto-fire — an always-on
   extractor would attach a `Record` to every scrape and silently change
   the default output shape for all users; explicit `--vertical og`/
-  MCP selection covers the use case honestly. `crawl --status <run_id>`
+  MCP selection covers the use case honestly. Proprietary per-site
+  verticals (e.g. a desktop-only `amazon_product`) are not built here:
+  embedders register them at startup via `vertical.Register`.
+  `crawl --status <run_id>`
   is CLI parity for the MCP poll (unknown id exits 4, handler-local).
 
 ### 10.6 Competitive-parity delta (Phase J)

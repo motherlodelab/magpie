@@ -287,7 +287,7 @@ never empty. Only flag is `--out`.
 #### `magpie vertical` — zero-LLM typed extraction
 
 ```bash
-magpie vertical --list                                   # all 15 extractors
+magpie vertical --list                                   # all 21 extractors
 magpie vertical https://arxiv.org/abs/1706.03762         # strict auto-dispatch
 magpie vertical https://shop.myshop.com/products/hoodie --name shopify_product
 magpie vertical https://example.com/anything --name og   # generic OG/meta, explicit only
@@ -301,11 +301,15 @@ magpie vertical https://example.com/anything --name og   # generic OG/meta, expl
 Built-in extractors: `arxiv`, `shopify_product`, `ecommerce_product`,
 `github_repo`, `pypi`, `npm`, `crates_io`, `reddit` (permalink comment
 trees via .json, depth 10 / 200 comments), `hackernews`, `youtube`,
-`stackoverflow`, `trustpilot`, `dockerhub`, `huggingface`, `og`.
+`stackoverflow`, `trustpilot`, `dockerhub`, `huggingface`, `og`,
+`upwork_job`, `job_posting`, `event`, `local_business`, `article`,
+`rss` (RSS 2.0 + Atom, cap 50).
 
-`og` is **OptIn**: it matches every URL, so it only fires with an
-explicit `--name og` — auto-dispatch never selects it, keeping the
-default scrape output shape stable.
+`og` — and the permissive standards extractors `job_posting`, `event`,
+`local_business`, `article` and `rss` — are **OptIn**: they match every
+(or every feed-shaped) URL, so they only fire with an explicit
+`--name` — auto-dispatch never selects them, keeping the default scrape
+output shape stable.
 
 #### `magpie crawl <url>` — BFS crawl + extract a site
 

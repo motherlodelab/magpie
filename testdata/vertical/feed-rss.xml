@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Example Blog</title>
+    <link>https://blog.example/</link>
+    <description>Mostly scrapers</description>
+    <item>
+      <title>RSS item one</title>
+      <link>https://blog.example/one</link>
+      <pubDate>Mon, 14 Sep 2026 08:00:00 GMT</pubDate>
+      <description>First RSS entry</description>
+    </item>
+    <item>
+      <title>RSS item two</title>
+      <link>https://blog.example/two</link>
+      <pubDate>Tue, 15 Sep 2026 08:00:00 GMT</pubDate>
+      <description>Second RSS entry</description>
+    </item>
+    <item>
+      <title>RSS item three</title>
+      <link>https://blog.example/three</link>
+      <pubDate>Wed, 16 Sep 2026 08:00:00 GMT</pubDate>
+      <description>Third RSS entry</description>
+    </item>
+    <item>
+      <title>RSS item four</title>
+      <link>https://blog.example/four</link>
+      <pubDate>Thu, 17 Sep 2026 08:00:00 GMT</pubDate>
+      <description>Fourth RSS entry</description>
+    </item>
+  </channel>
+</rss>
