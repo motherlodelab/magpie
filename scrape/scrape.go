@@ -65,6 +65,10 @@ type Options struct {
 	// Lang is the verbatim Accept-Language header value (control chars
 	// rejected — header-injection boundary).
 	Lang string
+	// Headers are raw "Name: value" request headers for the static
+	// path, merged after the profile bundle (user wins). Shape and
+	// control characters are validated here pre-I/O (OptionsError).
+	Headers []string
 	// Webhook URL for watch change notifications (operator-chosen
 	// endpoint; the POST client is scoped AllowPrivate).
 	Webhook string
@@ -176,6 +180,15 @@ func ValidateOptions(o Options) error {
 	}
 	if strings.ContainsFunc(o.Lang, unicode.IsControl) {
 		return &OptionsError{"scrape: lang must not contain control characters (it becomes a raw Accept-Language header value)"}
+	}
+	for i, h := range o.Headers {
+		if strings.ContainsFunc(h, unicode.IsControl) {
+			return &OptionsError{fmt.Sprintf("scrape: header %d must not contain control characters (it becomes a raw request header line)", i+1)}
+		}
+		name, _, ok := strings.Cut(h, ":")
+		if !ok || strings.TrimSpace(name) == "" {
+			return &OptionsError{fmt.Sprintf("scrape: header %d must be \"Name: value\"", i+1)}
+		}
 	}
 	return nil
 }
@@ -446,7 +459,7 @@ func fetchURL(ctx context.Context, vf vertical.Fetcher, rawURL, render string, o
 	}
 	// A4 pass-through: every status reaches Clean+Classify so blocked pages
 	// get typed quality errors instead of "fetch: HTTP %d".
-	resp, err := vf.Fetch(ctx, fetch.FetchRequest{URL: rawURL, Profile: o.Profile, Cookies: o.Cookies, Browser: o.Browser, Lang: o.Lang})
+	resp, err := vf.Fetch(ctx, fetch.FetchRequest{URL: rawURL, Profile: o.Profile, Cookies: o.Cookies, Browser: o.Browser, Lang: o.Lang, Headers: o.Headers})
 	if err != nil {
 		// G.2: a typed challenge gets exactly one rod escalation attempt
 		// under render=auto (a real browser often clears it); static

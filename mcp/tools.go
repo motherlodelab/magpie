@@ -42,6 +42,7 @@ type ScrapeIn struct {
 	Cookies         string     `json:"cookies,omitempty" jsonschema:"raw Cookie header value"`
 	Actions         StringList `json:"actions,omitempty" jsonschema:"browser action lines (rod), one per element: click <sel> | type <sel> <text> | scroll <n|top|bottom> | wait <ms> | wait-for <sel> | eval-js <expr>; forces browser rendering; screenshot is CLI-only"`
 	Lang            string     `json:"lang,omitempty" jsonschema:"Accept-Language header value, e.g. fr-CA,fr;q=0.9 (no control characters)"`
+	Headers         StringList `json:"headers,omitempty" jsonschema:"raw request headers, repeatable: Name: value (no control characters; wins over profile defaults)"`
 	CaptureXHR      StringList `json:"capture_xhr,omitempty" jsonschema:"Go regexps: capture matching XHR/fetch response bodies (browser rendering only)"`
 	CDP             string     `json:"cdp_url,omitempty" jsonschema:"remote browser CDP endpoint (ws://, wss://, http(s)://); overrides MAGPIE_CDP_URL"`
 }
@@ -100,6 +101,7 @@ func handleScrape(d Deps) func(context.Context, *sdk.CallToolRequest, ScrapeIn) 
 			Scope:      clean.Scope{Include: []string(in.Include), Exclude: []string(in.Exclude), OnlyMainContent: onlyMain},
 			Profile:    in.Profile, Cookies: in.Cookies, Browser: in.Browser,
 			Actions: []string(in.Actions), Lang: in.Lang,
+			Headers:    []string(in.Headers),
 			CaptureXHR: []string(in.CaptureXHR), CDP: in.CDP,
 		})
 		if err != nil {
