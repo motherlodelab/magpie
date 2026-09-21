@@ -62,7 +62,11 @@ type Options struct {
 	MaxCost      float64
 	Browser      string // TLS fingerprint: chrome|firefox|random ("" = stock)
 	Lang         string // verbatim Accept-Language override (control chars rejected by scrape.ValidateOptions)
-	DB           *store.DB
+	// Proxy is a per-run egress override (pool-line grammar) for every
+	// page fetch (static + rod escalation); beats the env pool. Validated
+	// pre-I/O by the caller via fetch.ValidateRequestProxy.
+	Proxy string
+	DB    *store.DB
 	// Scope bounds (compiled once in Run; bad globs fail pre-I/O).
 	PathPrefix      string
 	Include         []string
@@ -485,7 +489,7 @@ func (c *crawlContext) fetchPage(ctx context.Context, task core.FetchTask) (core
 	var last *fetch.FetchResponse
 	fetchStart := time.Now()
 	resp, err := FetchWithRetry(ctx, func() (*fetch.FetchResponse, error) {
-		r, ferr := c.static.Fetch(ctx, fetch.FetchRequest{URL: task.URL, Browser: c.opts.Browser, Lang: c.opts.Lang})
+		r, ferr := c.static.Fetch(ctx, fetch.FetchRequest{URL: task.URL, Browser: c.opts.Browser, Lang: c.opts.Lang, Proxy: c.opts.Proxy})
 		// Reset on transport failure: qualityErr must classify the
 		// terminal outcome, never a stale response from an earlier try.
 		last = r
@@ -520,6 +524,7 @@ func (c *crawlContext) fetchPage(ctx context.Context, task core.FetchTask) (core
 		bresp, berr := func() (*fetch.FetchResponse, error) {
 			defer c.gate.Release()
 			rod := fetch.NewRodFetcher()
+			rod.Proxy = c.opts.Proxy
 			defer func() { _ = rod.Close() }() //nolint:errcheck // teardown unactionable
 			return rod.Fetch(ctx, fetch.FetchRequest{URL: task.URL, Lang: c.opts.Lang})
 		}()

@@ -514,3 +514,45 @@ func TestRun_HeadersDeliveredStatic(t *testing.T) {
 		t.Errorf("Accept-Language = %q, want the run header to beat the profile bundle", got.Get("Accept-Language"))
 	}
 }
+
+// TestRun_ProxyThreadsToStatic — Batch B: Options.Proxy reaches the
+// static fetch E2E. A dead loopback proxy makes every fetch fail (the
+// option rode the request); the identical run without it succeeds.
+// fakeSOCKS5 is fetch-test-internal, and duplicating it is the exact
+// fork this suite forbids — the dead-port pin proves the threading both
+// ways without a second proxy fake.
+func TestRun_ProxyThreadsToStatic(t *testing.T) {
+	origin := scrapeOrigin(t, scrapeHTML)
+	db := openScrapeDB(t)
+
+	if _, err := scrape.Run(context.Background(), fakeDeps(db, nil, ""), origin, scrape.Options{
+		Render: "static", Proxy: "http://127.0.0.1:1",
+	}); err == nil {
+		t.Error("scrape through a dead per-run proxy must fail (option never reached the fetch layer?)")
+	}
+	res, err := scrape.Run(context.Background(), fakeDeps(db, nil, ""), origin, scrape.Options{Render: "static"})
+	if err != nil {
+		t.Fatalf("same run without Proxy: %v", err)
+	}
+	if res.Title != "Widget" {
+		t.Errorf("title = %q, want the origin page", res.Title)
+	}
+}
+
+// TestValidateOptions_Proxy — Batch B: bad per-run proxies surface
+// pre-I/O as OptionsError (ErrProxyConfig wording family); valid forms
+// pass.
+func TestValidateOptions_Proxy(t *testing.T) {
+	for _, bad := range []string{"ftp://p.example:3128", "host:port", "http://"} {
+		err := scrape.ValidateOptions(scrape.Options{Proxy: bad})
+		var oe *scrape.OptionsError
+		if !errors.As(err, &oe) {
+			t.Errorf("Proxy %q: err = %v, want *OptionsError", bad, err)
+		}
+	}
+	for _, good := range []string{"http://proxy.example:3128", "socks5://127.0.0.1:9050", "socks5h://gate.example:1080", "127.0.0.1:3128:user:pass"} {
+		if err := scrape.ValidateOptions(scrape.Options{Proxy: good}); err != nil {
+			t.Errorf("Proxy %q: %v", good, err)
+		}
+	}
+}

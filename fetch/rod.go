@@ -17,7 +17,11 @@ type RodFetcher struct {
 	// CDP is an optional remote browser endpoint (ws://, wss://, or
 	// http(s)://). When set, ensureBrowser connects to it and the local
 	// launcher never runs — no download, no local Chrome (farms/CI).
-	CDP string
+	// Proxy is a per-run egress override (scrape.Options.Proxy): passed
+	// to the launcher as --proxy-server. Only read at first launch —
+	// the browser is lazily created once per fetcher.
+	CDP   string
+	Proxy string
 }
 
 // NewRodFetcher constructs without launching (launch is lazy).
@@ -62,6 +66,20 @@ func (r *RodFetcher) ensureBrowser() error {
 		return nil
 	}
 	l := launcher.New()
+	if r.Proxy != "" {
+		u, err := ValidateRequestProxy(r.Proxy)
+		if err != nil {
+			return err
+		}
+		scheme := u.Scheme
+		if scheme == "socks5h" {
+			scheme = "socks5" // Chromium's flag grammar has no socks5h
+		}
+		// scheme://host:port only: --proxy-server has no inline-credential
+		// grammar (ponytail: authenticated browser proxies need an extension
+		// — upgrade path if a caller asks).
+		l = l.Proxy(scheme + "://" + u.Host)
+	}
 	controlURL, err := l.Launch()
 	if err != nil {
 		return fmt.Errorf("fetch: launch browser: %w", err)
