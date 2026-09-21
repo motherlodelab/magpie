@@ -2,6 +2,7 @@ package fetch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -136,13 +137,9 @@ func (r *RodFetcher) FetchWithActions(ctx context.Context, req FetchRequest, act
 		}
 		caps = &xhrCollector{patterns: patterns}
 	}
-	page, err := r.openPage(cctx, req, caps) // event consumer starts inside, pre-navigation
+	page, err := r.openLoadedPage(cctx, req, caps, nil)
 	if err != nil {
 		return nil, err
-	}
-	if err := page.WaitLoad(); err != nil {
-		_ = page.Close() //nolint:errcheck // error path; teardown failure unactionable
-		return nil, fmt.Errorf("fetch: wait load: %w", err)
 	}
 	if err := runActions(cctx, page, acts); err != nil {
 		_ = page.Close() //nolint:errcheck // error path; teardown failure unactionable
@@ -192,6 +189,58 @@ func (r *RodFetcher) openPage(cctx context.Context, req FetchRequest, caps *xhrC
 		return nil, fmt.Errorf("fetch: navigate: %w", err)
 	}
 	return page, nil
+}
+
+// navRetryable reports the WaitLoad navigation race: the page JS-redirected
+// mid-load (consent walls, auth bounces), destroying the execution context
+// rod was waiting on. A fresh navigation usually clears it; budget timeouts
+// and real failures are not retryable.
+func navRetryable(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "execution context was destroyed")
+}
+
+// openLoadedPage navigates and waits for load. prepare runs post-open,
+// pre-wait (the viewport override). A retryable WaitLoad race gets exactly
+// one fresh navigation; every other error surfaces as-is. The event
+// consumer starts inside openPage, pre-navigation, on every attempt.
+// openLoadedPage navigates and waits for load. prepare runs post-open,
+// pre-wait (the viewport override). A retryable WaitLoad race gets exactly
+// one fresh navigation; every other error surfaces as-is. When the retry
+// fails, its error joins the original — the race stays the primary wrap.
+// ponytail: with CaptureXHR set, a retry's response can carry partial
+// bodies from the aborted first navigation — acceptable for a race guard.
+func (r *RodFetcher) openLoadedPage(cctx context.Context, req FetchRequest, caps *xhrCollector, prepare func(*rod.Page) error) (*rod.Page, error) {
+	var firstErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		page, err := r.openPage(cctx, req, caps)
+		if err != nil {
+			if firstErr != nil {
+				return nil, fmt.Errorf("fetch: wait load: %w", errors.Join(firstErr, err))
+			}
+			return nil, err
+		}
+		if prepare != nil {
+			if err := prepare(page); err != nil {
+				_ = page.Close() //nolint:errcheck // error path; teardown failure unactionable
+				if firstErr != nil {
+					return nil, fmt.Errorf("fetch: wait load: %w", errors.Join(firstErr, err))
+				}
+				return nil, err
+			}
+		}
+		werr := page.WaitLoad()
+		if werr == nil {
+			return page, nil
+		}
+		_ = page.Close() //nolint:errcheck // error path; teardown failure unactionable
+		if firstErr == nil {
+			firstErr = werr
+		}
+		if !navRetryable(werr) {
+			return nil, fmt.Errorf("fetch: wait load: %w", werr)
+		}
+	}
+	return nil, fmt.Errorf("fetch: wait load: %w", firstErr)
 }
 
 // runActions executes action lines in order under the fetch budget.
@@ -271,19 +320,16 @@ func (r *RodFetcher) screenshot(ctx context.Context, rawURL string, width, heigh
 	}
 	cctx, cancel := context.WithTimeout(ctx, screenshotBudget)
 	defer cancel()
-	page, err := r.openPage(cctx, FetchRequest{URL: rawURL}, nil)
+	page, err := r.openLoadedPage(cctx, FetchRequest{URL: rawURL}, nil, func(p *rod.Page) error {
+		if width > 0 && height > 0 {
+			return p.SetViewport(&proto.EmulationSetDeviceMetricsOverride{Width: width, Height: height})
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = page.Close() }() //nolint:errcheck // page teardown; failure unactionable
-	if width > 0 && height > 0 {
-		if err := page.SetViewport(&proto.EmulationSetDeviceMetricsOverride{Width: width, Height: height}); err != nil {
-			return nil, fmt.Errorf("fetch: viewport: %w", err)
-		}
-	}
-	if err := page.WaitLoad(); err != nil {
-		return nil, fmt.Errorf("fetch: wait load: %w", err)
-	}
 	if err := runActions(cctx, page, acts); err != nil {
 		return nil, err
 	}
