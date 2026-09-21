@@ -756,71 +756,67 @@ func TestCodex_NoBinary(t *testing.T) {
 	}
 }
 
-// TestAdapterEndpointJoin pins the tolerant base/path join: bases in the wild
-// disagree about carrying the /v1 segment (api.anthropic.com does not, the zen
-// bases and MAGPIE_BASE_URL typically do). Before the fix, a base ending in
-// /v1 hitting the Anthropic adapter doubled the segment —
-// opencode.ai/zen/go/v1/v1/messages — and 404'd for EVERY messages-routed zen
-// model (claude-*, minimax-*, qwen-*-max) while chat/completions models worked.
+// TestAdapterEndpointJoin pins the wire path per adapter and base shape.
+// The Anthropic side joins tolerantly: bases in the wild disagree about
+// carrying the /v1 segment (api.anthropic.com does not; the zen bases and
+// MAGPIE_BASE_URL usually do), and a doubled segment —
+// opencode.ai/zen/go/v1/v1/messages — 404'd every messages-routed zen
+// model (claude-*, minimax-*, qwen-*-max). The OpenAI side deliberately
+// appends /chat/completions verbatim: its bases carry their own path
+// prefix, and root-mounted gateways must keep working untouched.
 func TestAdapterEndpointJoin(t *testing.T) {
 	t.Setenv("MAGPIE_BASE_URL", "") // hermetic: ambient env must not pick the base
 	sch := mustLoadSchema(t, "../testdata/extract/price.yaml")
 
-	newSrv := func(envelope string, pathp *string) *httptest.Server {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			*pathp = r.URL.Path
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, envelope) //nolint:errcheck // fake provider: write failure fails the request, not the test
-		}))
-		t.Cleanup(srv.Close)
-		return srv
+	tests := []struct {
+		name     string
+		envelope string
+		suffix   string // appended to the httptest base URL
+		build    func(base string) extract.Extractor
+		wantPath string
+	}{
+		{
+			name:     "anthropic base without /v1 (api.anthropic.com shape)",
+			envelope: anthropicEnvelope(`{"name":"Widget","price":12.99}`),
+			build:    func(base string) extract.Extractor { return extract.NewAnthropic(base, "k", "claude-sonnet-5", sch) },
+			wantPath: "/v1/messages",
+		},
+		{
+			name:     "anthropic base with /v1 (zen shape, was /v1/v1/messages)",
+			envelope: anthropicEnvelope(`{"name":"Widget","price":12.99}`),
+			suffix:   "/v1",
+			build:    func(base string) extract.Extractor { return extract.NewAnthropic(base, "k", "claude-sonnet-5", sch) },
+			wantPath: "/v1/messages",
+		},
+		{
+			name:     "openai base with /v1 (api.openai.com and zen shape)",
+			envelope: openAIEnvelope(`{"name":"Widget","price":12.99}`),
+			suffix:   "/v1",
+			build:    func(base string) extract.Extractor { return extract.NewOpenAI(base, "k", "gpt-4o-mini", sch) },
+			wantPath: "/v1/chat/completions",
+		},
+		{
+			name:     "openai base without /v1 stays root-mounted",
+			envelope: openAIEnvelope(`{"name":"Widget","price":12.99}`),
+			build:    func(base string) extract.Extractor { return extract.NewOpenAI(base, "k", "gpt-4o-mini", sch) },
+			wantPath: "/chat/completions",
+		},
 	}
-
-	t.Run("anthropic base without /v1 (api.anthropic.com shape)", func(t *testing.T) {
-		var path string
-		srv := newSrv(anthropicEnvelope(`{"name":"Widget","price":12.99}`), &path)
-		ex := extract.NewAnthropic(srv.URL, "k", "claude-sonnet-5", sch)
-		if _, err := ex.Extract(t.Context(), extract.ExtractInput{Markdown: "# Widget\n\nPrice: 12.99"}); err != nil {
-			t.Fatalf("Extract: %v", err)
-		}
-		if path != "/v1/messages" {
-			t.Errorf("path = %q, want /v1/messages", path)
-		}
-	})
-
-	t.Run("anthropic base with /v1 (zen shape, was /v1/v1/messages)", func(t *testing.T) {
-		var path string
-		srv := newSrv(anthropicEnvelope(`{"name":"Widget","price":12.99}`), &path)
-		ex := extract.NewAnthropic(srv.URL+"/v1", "k", "claude-sonnet-5", sch)
-		if _, err := ex.Extract(t.Context(), extract.ExtractInput{Markdown: "# Widget\n\nPrice: 12.99"}); err != nil {
-			t.Fatalf("Extract: %v", err)
-		}
-		if path != "/v1/messages" {
-			t.Errorf("path = %q, want /v1/messages (no doubled segment)", path)
-		}
-	})
-
-	t.Run("openai base with /v1 (api.openai.com/zen shape)", func(t *testing.T) {
-		var path string
-		srv := newSrv(openAIEnvelope(`{"name":"Widget","price":12.99}`), &path)
-		ex := extract.NewOpenAI(srv.URL+"/v1", "k", "gpt-4o-mini", sch)
-		if _, err := ex.Extract(t.Context(), extract.ExtractInput{Markdown: "# Widget\n\nPrice: 12.99"}); err != nil {
-			t.Fatalf("Extract: %v", err)
-		}
-		if path != "/v1/chat/completions" {
-			t.Errorf("path = %q, want /v1/chat/completions", path)
-		}
-	})
-
-	t.Run("openai base without /v1 gets the full path", func(t *testing.T) {
-		var path string
-		srv := newSrv(openAIEnvelope(`{"name":"Widget","price":12.99}`), &path)
-		ex := extract.NewOpenAI(srv.URL, "k", "gpt-4o-mini", sch)
-		if _, err := ex.Extract(t.Context(), extract.ExtractInput{Markdown: "# Widget\n\nPrice: 12.99"}); err != nil {
-			t.Fatalf("Extract: %v", err)
-		}
-		if path != "/v1/chat/completions" {
-			t.Errorf("path = %q, want /v1/chat/completions", path)
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var path string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				path = r.URL.Path
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, tt.envelope) //nolint:errcheck // fake provider: write failure fails the request, not the test
+			}))
+			t.Cleanup(srv.Close)
+			if _, err := tt.build(srv.URL+tt.suffix).Extract(t.Context(), extract.ExtractInput{Markdown: "# Widget\n\nPrice: 12.99"}); err != nil {
+				t.Fatalf("Extract: %v", err)
+			}
+			if path != tt.wantPath {
+				t.Errorf("path = %q, want %q", path, tt.wantPath)
+			}
+		})
+	}
 }
