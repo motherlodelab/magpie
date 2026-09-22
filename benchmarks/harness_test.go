@@ -1,9 +1,8 @@
 // Package benchmarks is the offline quality harness: it runs the real clean
 // pipeline over the committed testdata fixtures and asserts metric floors that
-// survive -update regeneration (a rewritten .md cannot absorb a regression past these
-// floors). Test-only: go build ./... never
-// sees this package. Methodology: methodology.md; published numbers: README.md
-// + results/.
+// survive -update regeneration: a rewritten .md golden cannot absorb a
+// regression past these floors. Test-only: go build ./... never sees this
+// package. Methodology: methodology.md; published numbers: README.md + results/.
 package benchmarks
 
 import (
@@ -28,7 +27,7 @@ var writeResults = flag.String("write-results", "", "write run JSON to this path
 // (probe 2026-09-24 on master), not aspirations: they pin extraction quality
 // with ±25-30% slack around the measured value.
 type fixture struct {
-	name       string      // file is ../../testdata/<dir>/<name>.html
+	name       string      // file is ../testdata/<dir>/<name>.html (test binary cwd = package dir)
 	dir        string      // "clean" or "quality"
 	status     int         // RawPage.StatusCode — Classify is status-dependent
 	band       [2]int      // frozen md word floor/ceiling; {0,0} ⇒ assert <50 cap only
@@ -68,7 +67,9 @@ type result struct {
 	LLMChars   int    `json:"llm_chars"`
 	FactsKept  int    `json:"facts_kept"`
 	FactsTotal int    `json:"facts_total"`
-	CleanNS    int64  `json:"clean_ns"`
+	// Clean+ToLLMText combined, warm — named pipeline_ns because it is not
+	// clean-only (see runRow).
+	PipelineNS int64 `json:"pipeline_ns"`
 }
 
 type resultsFile struct {
@@ -103,10 +104,10 @@ func factRe(fact string) *regexp.Regexp {
 }
 
 // runRow drives the real pipeline once: Clean + ToLLMText, timed together
-// (the 1s ceiling covers the combined cost).
-func runRow(t testing.TB, f fixture) (clean.CleanedPage, string, time.Duration) {
+// (the 1s ceiling covers the combined cost, so does the recorded duration).
+func runRow(t testing.TB, html []byte, f fixture) (clean.CleanedPage, string, time.Duration) {
 	t.Helper()
-	raw := clean.RawPage{HTML: loadHTML(t, f.dir, f.name), URL: "https://example.com/" + f.name, StatusCode: f.status}
+	raw := clean.RawPage{HTML: html, URL: "https://example.com/" + f.name, StatusCode: f.status}
 	start := time.Now()
 	p, err := clean.Clean(context.Background(), raw)
 	if err != nil {
@@ -120,8 +121,8 @@ var tagRe = regexp.MustCompile(`<[^>]*>`)
 
 // rawWordCount strips tags naively for the raw-word denominator of the
 // reduction aggregate; informational only.
-func rawWordCount(t testing.TB, f fixture) int {
-	return clean.WordCount(string(tagRe.ReplaceAll(loadHTML(t, f.dir, f.name), []byte(" "))))
+func rawWordCount(html []byte) int {
+	return clean.WordCount(string(tagRe.ReplaceAll(html, []byte(" "))))
 }
 
 func TestFactMatching(t *testing.T) {
@@ -147,7 +148,8 @@ func TestCorpus_CleanQuality(t *testing.T) {
 	rows := make([]result, 0, len(corpus))
 	for _, f := range corpus {
 		t.Run(f.name, func(t *testing.T) {
-			p, llm, elapsed := runRow(t, f)
+			html := loadHTML(t, f.dir, f.name)
+			p, llm, elapsed := runRow(t, html, f)
 			if p.Quality != f.wantIssue {
 				t.Errorf("Quality = %q, want %q", p.Quality, f.wantIssue)
 			}
@@ -162,15 +164,15 @@ func TestCorpus_CleanQuality(t *testing.T) {
 			}
 			kept := 0
 			for _, fact := range f.facts {
-				if factRe(fact).MatchString(p.Markdown) && factRe(fact).MatchString(llm) {
-					kept++
-					continue
-				}
-				if !factRe(fact).MatchString(p.Markdown) {
+				inMD, inLLM := factRe(fact).MatchString(p.Markdown), factRe(fact).MatchString(llm)
+				if !inMD {
 					t.Errorf("fact %q missing from markdown", fact)
 				}
-				if !factRe(fact).MatchString(llm) {
+				if !inLLM {
 					t.Errorf("fact %q missing from llm text", fact)
+				}
+				if inMD && inLLM {
+					kept++
 				}
 			}
 			if f.llmShrinks && len(llm) >= len(p.Markdown) {
@@ -185,9 +187,9 @@ func TestCorpus_CleanQuality(t *testing.T) {
 				t.Errorf("clean+llm took %s, want <1s — pathological regression?", elapsed)
 			}
 			rows = append(rows, result{
-				Fixture: f.name, RawWords: rawWordCount(t, f), MDWords: words,
+				Fixture: f.name, RawWords: rawWordCount(html), MDWords: words,
 				LLMTokens: len(llm) / 4, MDChars: len(p.Markdown), LLMChars: len(llm),
-				FactsKept: kept, FactsTotal: len(f.facts), CleanNS: int64(elapsed),
+				FactsKept: kept, FactsTotal: len(f.facts), PipelineNS: int64(elapsed),
 			})
 		})
 	}

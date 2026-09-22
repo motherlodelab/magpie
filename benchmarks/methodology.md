@@ -50,10 +50,10 @@ inside the test. Measured steady-state cost is single-digit ms, so the ceiling
 cannot flake; it exists to trip the hidden-browser-launch / quadratic-scan
 class of regression, not to make a perf claim. Honest per-op numbers live in
 the `BenchmarkClean`/`BenchmarkLLM` functions (`ns/op`, `words/sec`,
-`-benchmem` allocs). `clean_ns` in the results JSON is warm steady-state cost:
-the pipeline is cleaned once untimed before the loop because the first Clean
-pays one-time trafilatura init (~1s under test-suite load) that is not
-per-page cost.
+`-benchmem` allocs). `pipeline_ns` in the results JSON is the warm steady-state
+Clean + ToLLMText combined cost (named for the pair it covers): the pipeline is
+cleaned once untimed before the loop because the first Clean pays one-time
+trafilatura init (~1s under test-suite load) that is not per-page cost.
 
 ## Band freezing
 

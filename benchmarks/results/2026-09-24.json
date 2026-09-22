@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-22T08:21:15Z",
+  "generated_at": "2026-09-22T08:33:53Z",
   "go_version": "go1.26.5",
   "commit": "",
   "aggregates": {
@@ -16,7 +16,7 @@
       "llm_chars": 945,
       "facts_kept": 5,
       "facts_total": 5,
-      "clean_ns": 3707494
+      "pipeline_ns": 4281850
     },
     {
       "fixture": "product",
@@ -27,7 +27,7 @@
       "llm_chars": 931,
       "facts_kept": 5,
       "facts_total": 5,
-      "clean_ns": 3205142
+      "pipeline_ns": 3038188
     },
     {
       "fixture": "spa-shell",
@@ -38,7 +38,7 @@
       "llm_chars": 54,
       "facts_kept": 1,
       "facts_total": 1,
-      "clean_ns": 1242752
+      "pipeline_ns": 1244266
     },
     {
       "fixture": "challenge-akamai",
@@ -49,7 +49,7 @@
       "llm_chars": 131,
       "facts_kept": 0,
       "facts_total": 0,
-      "clean_ns": 1209265
+      "pipeline_ns": 1768816
     },
     {
       "fixture": "login-wall",
@@ -60,7 +60,7 @@
       "llm_chars": 87,
       "facts_kept": 0,
       "facts_total": 0,
-      "clean_ns": 948174
+      "pipeline_ns": 1096012
     },
     {
       "fixture": "empty-shell",
@@ -71,7 +71,7 @@
       "llm_chars": 54,
       "facts_kept": 0,
       "facts_total": 0,
-      "clean_ns": 1037967
+      "pipeline_ns": 1100833
     },
     {
       "fixture": "rich-with-marker",
@@ -82,7 +82,7 @@
       "llm_chars": 5661,
       "facts_kept": 5,
       "facts_total": 5,
-      "clean_ns": 8508460
+      "pipeline_ns": 6263863
     }
   ]
 }
