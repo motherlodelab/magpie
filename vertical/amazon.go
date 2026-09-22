@@ -107,12 +107,14 @@ func extractAmazon(ctx context.Context, f Fetcher, u *url.URL) (map[string]any, 
 }
 
 // amazonASIN pulls the id from /dp/{asin} or /gp/product/{asin}/… shapes.
+// Guard mirrors matchAmazon — --name can call Extract on any URL and a
+// garbage asin must trace to the URL, not to a trusting slice.
 func amazonASIN(u *url.URL) string {
 	segs := pathSegs(u.Path)
 	if len(segs) >= 2 && segs[0] == "dp" {
 		return segs[1]
 	}
-	if len(segs) >= 3 {
+	if len(segs) >= 3 && segs[0] == "gp" && segs[1] == "product" {
 		return segs[2]
 	}
 	return ""

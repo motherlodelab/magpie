@@ -82,6 +82,10 @@ func extractEbay(ctx context.Context, f Fetcher, u *url.URL) (map[string]any, er
 	if p := parsePriceString(doc.Find(".x-price-primary").First().Text()); p != nil {
 		rec["price"] = p
 	}
+	// ponytail: two vocabularies share this key — JSON-LD yields the
+	// schema.org enum ("NewCondition"), the DOM path yields the label
+	// Amazon-style pages print ("New"). Consumers must not test equality
+	// across paths; unify via a label→enum map only when one needs to.
 	if v := strings.TrimPrefix(foldSpaces(doc.Find(".x-item-details").First().Text()), "Condition:"); v != "" {
 		rec["condition"] = foldSpaces(v)
 	}

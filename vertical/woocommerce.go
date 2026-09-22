@@ -101,7 +101,7 @@ func extractWooCommerce(ctx context.Context, f Fetcher, u *url.URL) (map[string]
 	if v := foldSpaces(doc.Find(".sku").First().Text()); v != "" {
 		rec["sku"] = v
 	}
-	if v := foldSpaces(doc.Find("p.stock, .stock").First().Text()); v != "" {
+	if v := foldSpaces(doc.Find(".stock").First().Text()); v != "" { // p.stock, .stock — one class covers both
 		rec["stock_status"] = v
 	}
 	if len(rec) > 1 {
