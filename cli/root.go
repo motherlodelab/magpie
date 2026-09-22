@@ -55,7 +55,7 @@ func rootCmd() *cobra.Command {
 	root.PersistentFlags().StringVar(&apiKey, "api-key", "", "provider API key (overrides env/keyring)")
 	root.PersistentFlags().StringVar(&proxyFile, "proxy-file", "", "proxy pool file: one URL (http|https|socks5) or host:port:user:pass per line; # comments (overrides MAGPIE_PROXY)")
 	root.AddCommand(newScrapeCmd(), newExtractCmd(), newConfigCmd(), newCrawlCmd(), newCacheCmd(), newServeCmd(), newBuildCmd(),
-		newBatchCmd(), newMapCmd(), newSummarizeCmd(), newDiffCmd(), newBrandCmd(), newVerticalCmd(), newSearchCmd(), newWatchCmd())
+		newBatchCmd(), newMapCmd(), newSummarizeCmd(), newDiffCmd(), newBrandCmd(), newVerticalCmd(), newSearchCmd(), newWatchCmd(), newInitCmd())
 	return root
 }
 

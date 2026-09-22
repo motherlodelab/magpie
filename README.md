@@ -619,8 +619,18 @@ ones. `crawl_site` runs synchronously to completion (no background jobs),
 returns a `run_id`, and re-invoking it with that `run_id` reports stored
 status without touching the extractor.
 
-Claude Desktop config (`{ "mcpServers": { "magpie": {
-"command": "magpie", "args": ["serve"] } } }`):
+**Agent integrations:** `magpie init --client <claude-code|claude-desktop|cursor>`
+writes this config for you — it merges the `magpie` stanza into the client's
+existing MCP config (other servers and keys survive; idempotent on re-run;
+no env block, ever). `--client generic` or `--dry-run` just prints the stanza:
+
+```json
+{ "mcpServers": { "magpie": { "command": "/abs/path/to/magpie", "args": ["serve"] } } }
+```
+
+A ready-made agent skill lives in [`skill/SKILL.md`](skill/SKILL.md) — CLI verbs,
+the 12 tools below, and zero-LLM-first guidance for skill-compatible runners
+(Claude Code, Cursor, …).
 
 | Tool | Action |
 | :-- | :-- |
