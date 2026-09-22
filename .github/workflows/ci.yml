@@ -50,6 +50,9 @@ jobs:
       # own managed download when absent.
       - uses: browser-actions/setup-chrome@v2
       - run: go mod download all
+      # Warm rod's managed chromium with a stdout-agnostic smoke test so the
+      # ~150MB download (cold cache) never pollutes captured-stdout asserts.
+      - run: go test -tags browser -run TestRodSmoke ./fetch/
       - run: go test -tags browser ./...
         env:
           # GH runners have no SUID/userns sandbox; Chrome aborts at zygote

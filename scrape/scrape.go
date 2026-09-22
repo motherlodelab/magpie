@@ -472,10 +472,20 @@ func fetchURL(ctx context.Context, vf vertical.Fetcher, rawURL, render string, o
 	if render == "browser" || len(o.Actions) > 0 || len(o.CaptureXHR) > 0 {
 		return fetchBrowserChecked(ctx, rawURL, o)
 	}
+	// file:// never auto-escalates to the browser: a local file that failed
+	// or parsed tiny stays that way — Chrome cannot make it appear, and the
+	// attempt costs a launch (plus a 150MB chromium download on a cold box).
+	isFile := false
+	if u, perr := url.Parse(rawURL); perr == nil {
+		isFile = u.Scheme == "file"
+	}
 	// A4 pass-through: every status reaches Clean+Classify so blocked pages
 	// get typed quality errors instead of "fetch: HTTP %d".
 	resp, err := vf.Fetch(ctx, fetch.FetchRequest{URL: rawURL, Profile: o.Profile, Cookies: o.Cookies, Browser: o.Browser, Lang: o.Lang, Headers: o.Headers, Proxy: o.Proxy})
 	if err != nil {
+		if isFile {
+			return nil, err
+		}
 		// G.2: a typed challenge gets exactly one rod escalation attempt
 		// under render=auto (a real browser often clears it); static
 		// callers asked for no browser and get the typed error directly.
@@ -495,7 +505,7 @@ func fetchURL(ctx context.Context, vf vertical.Fetcher, rawURL, render string, o
 		return resp, nil
 	}
 	score, embedded := fetch.ScoreJSRequired(resp.HTML, resp.Headers)
-	if embedded || !fetch.NeedsBrowser(score) {
+	if isFile || embedded || !fetch.NeedsBrowser(score) {
 		return resp, nil
 	}
 	return fetchBrowser(ctx, rawURL, o)
