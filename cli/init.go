@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -38,9 +39,7 @@ your own environment.`,
 	}
 	cmd.Flags().StringVar(&client, "client", "", "claude-code|claude-desktop|cursor|generic")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the stanza to stdout instead of writing")
-	if err := cmd.MarkFlagRequired("client"); err != nil { //nolint:errcheck // flag exists; error impossible
-		panic(err)
-	}
+	_ = cmd.MarkFlagRequired("client") //nolint:errcheck // flag defined two lines above; error impossible
 	return cmd
 }
 
@@ -123,10 +122,19 @@ func buildStanza() (mcpStanza, error) {
 // struct would drop. mcpServers present but not an object is a hard
 // error, never an overwrite. os.WriteFile sets 0600 only on create;
 // an existing file keeps its mode.
+// ponytail: os.WriteFile truncates in place, so a kill mid-write can in
+// theory lose the config; temp+rename was rejected because preserving an
+// existing file's mode across rename needs a stat+chmod dance for a
+// ~200-byte file written by an interactive command.
 func mergeStanza(path string, s mcpStanza) error {
 	var cfg map[string]any
 	if raw, err := os.ReadFile(path); err == nil {
-		if err := json.Unmarshal(raw, &cfg); err != nil {
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		// UseNumber keeps the user config's number literals verbatim on the
+		// round-trip (same rationale as scrape.go) — float64 would silently
+		// rewrite integers past 2^53 in keys we promised not to touch.
+		dec.UseNumber()
+		if err := dec.Decode(&cfg); err != nil {
 			return fmt.Errorf("init: parse %s: %w", path, err)
 		}
 	} else if !os.IsNotExist(err) {
@@ -135,12 +143,14 @@ func mergeStanza(path string, s mcpStanza) error {
 	if cfg == nil {
 		cfg = map[string]any{}
 	}
-	servers, ok := cfg["mcpServers"].(map[string]any)
-	if cfg["mcpServers"] != nil && !ok {
-		return fmt.Errorf("init: %s: mcpServers is %T, want an object — not overwriting", path, cfg["mcpServers"])
-	}
-	if servers == nil {
+	var servers map[string]any
+	switch v := cfg["mcpServers"].(type) {
+	case map[string]any:
+		servers = v
+	case nil: // key absent, or explicit JSON null — nothing of theirs to lose
 		servers = map[string]any{}
+	default:
+		return fmt.Errorf("init: %s: mcpServers is %T, want an object — not overwriting", path, cfg["mcpServers"])
 	}
 	servers["magpie"] = s
 	cfg["mcpServers"] = servers

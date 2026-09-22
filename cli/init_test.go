@@ -230,6 +230,23 @@ func TestInit_IdempotentRerun(t *testing.T) {
 	}
 }
 
+// ---- mergeStanza: user numbers survive the round-trip (US-2, trust boundary) ----
+
+func TestInit_UserNumbersVerbatim(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".mcp.json")
+	writeConfig(t, path, `{"mcpServers":{"other":{"command":"x","maxTokens":123456789012345678}}}`)
+	if err := mergeStanza(path, mcpStanza{Command: "x", Args: []string{"serve"}}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte("123456789012345678")) {
+		t.Errorf("user integer rewritten (float64 round-trip?): %s", raw)
+	}
+}
+
 // ---- mergeStanza: perms preserved on existing file (US-2) ----
 
 func TestInit_ExistingFilePermsPreserved(t *testing.T) {
