@@ -5,6 +5,7 @@
 package vertical
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/motherlodelab/magpie/fetch"
 )
 
@@ -130,6 +132,18 @@ func fetchJSON(ctx context.Context, f Fetcher, rawURL string) (map[string]any, e
 		return nil, fmt.Errorf("vertical: GET %s: decode: %w", rawURL, err)
 	}
 	return m, nil
+}
+
+// parseHTML parses fetched bytes for DOM extraction; the error names the
+// vertical so a malformed page fails loudly at the right site (the
+// degrade-to-fallback sites in social/jsonld keep their own inline call —
+// parse failure is survivable there, a different contract).
+func parseHTML(body []byte, name string) (*goquery.Document, error) {
+	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("vertical: %s: parse html: %w", name, err)
+	}
+	return doc, nil
 }
 
 // child walks nested maps by key path; nil when any hop misses.

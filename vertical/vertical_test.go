@@ -101,6 +101,10 @@ func TestList_ExactNameSet(t *testing.T) {
 		// Phase V additions.
 		"job_posting": true, "event": true, "local_business": true,
 		"article": true, "rss": true,
+		// Phase W additions.
+		"etsy_listing": true, "woocommerce_product": true,
+		"substack_post": true, "dev_to_article": true,
+		"ebay_item": true, "amazon_product": true,
 	}
 	got := map[string]bool{}
 	for _, info := range vertical.List() {
@@ -119,6 +123,35 @@ func TestList_ExactNameSet(t *testing.T) {
 		if !got[n] {
 			t.Errorf("List() missing %q", n)
 		}
+	}
+}
+
+// TestW_AutoDispatch pins the Phase W dispatch contract: the five new
+// host-bound autos return the RIGHT name per URL (registration-order
+// surprises are a real failure mode), and the permissive woo shape never
+// auto-fires.
+func TestW_AutoDispatch(t *testing.T) {
+	t.Parallel()
+	hits := map[string]string{
+		"amazon_product": "https://www.amazon.com/dp/B08N5WRWNW",
+		"ebay_item":      "https://www.ebay.com/itm/1234567890",
+		"etsy_listing":   "https://www.etsy.com/listing/1283746291/mug",
+		"substack_post":  "https://demo.substack.com/p/hello-world",
+		"dev_to_article": "https://dev.to/alexdev/go-generics",
+	}
+	for want, raw := range hits {
+		ex, ok := vertical.MatchURL(raw)
+		if !ok {
+			t.Errorf("MatchURL(%s) missed, want %s", raw, want)
+			continue
+		}
+		if ex.Info.Name != want {
+			t.Errorf("MatchURL(%s) = %s, want %s", raw, ex.Info.Name, want)
+		}
+	}
+	// The OptIn woo shape must miss auto-dispatch (shop.example is nobody's host).
+	if ex, ok := vertical.MatchURL("https://shop.example/product/x"); ok {
+		t.Errorf("MatchURL(woo shape) = %s — must stay OptIn-only", ex.Info.Name)
 	}
 }
 

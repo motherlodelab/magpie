@@ -1,13 +1,10 @@
 package vertical
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net/url"
 	"strings"
-
-	"github.com/PuerkitoBio/goquery"
 )
 
 func init() {
@@ -34,9 +31,9 @@ func extractOG(ctx context.Context, f Fetcher, u *url.URL) (map[string]any, erro
 	if err != nil {
 		return nil, err
 	}
-	doc, derr := goquery.NewDocumentFromReader(bytes.NewReader(body))
-	if derr != nil {
-		return nil, fmt.Errorf("vertical: og: parse html: %w", derr)
+	doc, err := parseHTML(body, "og")
+	if err != nil {
+		return nil, err
 	}
 	out := map[string]any{}
 	set := func(key, val string) {

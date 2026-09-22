@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -136,4 +137,82 @@ func productMap(m map[string]any, pageURL string) map[string]any {
 		"availability": availability,
 		"url":          url,
 	}
+}
+
+// offersMap normalizes a Product block's offers (single object or first
+// array element) — the productMap shape, shared by the marketplace verticals.
+func offersMap(m map[string]any) map[string]any {
+	if offers := child(m, "offers"); offers != nil {
+		return offers
+	}
+	if arr, _ := m["offers"].([]any); len(arr) > 0 {
+		return anyMap(arr[0])
+	}
+	return nil
+}
+
+// offersPrice builds the {amount, currency} record price from a Product
+// block's offers; nil when no numeric price (omission over guessing).
+func offersPrice(m map[string]any) map[string]any {
+	offers := offersMap(m)
+	if offers == nil {
+		return nil
+	}
+	amount := num(offers, "price")
+	if amount == 0 {
+		return nil
+	}
+	out := map[string]any{"amount": amount}
+	if c := str(offers, "priceCurrency"); c != "" {
+		out["currency"] = c
+	}
+	return out
+}
+
+// schemaShort strips the schema.org namespace prefix from enum-ish URLs
+// ("https://schema.org/NewCondition" → "NewCondition") — the suffix is
+// the honest enum; the full URL is namespace leak.
+func schemaShort(s string) string {
+	for _, p := range []string{"https://schema.org/", "http://schema.org/"} {
+		s = strings.TrimPrefix(s, p)
+	}
+	return s
+}
+
+// firstNumber parses the first number in free text ("8,234 ratings" →
+// 8234, "4.5 out of 5 stars" → 4.5); 0 when none.
+func firstNumber(s string) float64 {
+	s = strings.ReplaceAll(s, ",", "")
+	for _, f := range strings.FieldsFunc(s, func(r rune) bool {
+		return (r < '0' || r > '9') && r != '.'
+	}) {
+		if v, err := strconv.ParseFloat(f, 64); err == nil {
+			return v
+		}
+	}
+	return 0
+}
+
+// parsePriceString extracts an en-US dot-decimal price from free DOM text
+// ("US $89.99" → {amount: 89.99, currency: "USD"}). Unknown symbol ⇒
+// currency omitted, amount kept; no number ⇒ nil (omit the whole key).
+// ponytail: en-US only — regional formats ("€12,50") misparse by design;
+// upgrade alongside any regional-TLD amazon/ebay wave.
+func parsePriceString(s string) map[string]any {
+	currency := ""
+	for _, sc := range [][2]string{{"$", "USD"}, {"€", "EUR"}, {"£", "GBP"}} {
+		if strings.Contains(s, sc[0]) {
+			currency = sc[1]
+			break
+		}
+	}
+	n := firstNumber(s)
+	if n == 0 {
+		return nil
+	}
+	out := map[string]any{"amount": n}
+	if currency != "" {
+		out["currency"] = currency
+	}
+	return out
 }

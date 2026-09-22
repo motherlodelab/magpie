@@ -287,7 +287,7 @@ never empty. Only flag is `--out`.
 #### `magpie vertical` — zero-LLM typed extraction
 
 ```bash
-magpie vertical --list                                   # all 21 extractors
+magpie vertical --list                                   # all 27 extractors
 magpie vertical https://arxiv.org/abs/1706.03762         # strict auto-dispatch
 magpie vertical https://shop.myshop.com/products/hoodie --name shopify_product
 magpie vertical https://example.com/anything --name og   # generic OG/meta, explicit only
@@ -303,13 +303,19 @@ Built-in extractors: `arxiv`, `shopify_product`, `ecommerce_product`,
 trees via .json, depth 10 / 200 comments), `hackernews`, `youtube`,
 `stackoverflow`, `trustpilot`, `dockerhub`, `huggingface`, `og`,
 `upwork_job`, `job_posting`, `event`, `local_business`, `article`,
-`rss` (RSS 2.0 + Atom, cap 50).
+`rss` (RSS 2.0 + Atom, cap 50), `etsy_listing`, `woocommerce_product`,
+`substack_post` (via the same-origin posts API, custom domains included),
+`dev_to_article`, `ebay_item` and `amazon_product` (buy-box DOM).
 
-`og` — and the permissive standards extractors `job_posting`, `event`,
-`local_business`, `article` and `rss` — are **OptIn**: they match every
+`og` — the permissive standards extractors `job_posting`, `event`,
+`local_business`, `article` and `rss` — and `woocommerce_product` (any
+shop with a `/product/` permalink) — are **OptIn**: they match every
 (or every feed-shaped) URL, so they only fire with an explicit
 `--name` — auto-dispatch never selects them, keeping the default scrape
-output shape stable.
+output shape stable. The Phase W marketplace extractors
+(`etsy_listing`, `ebay_item`, `amazon_product`) and the platform
+extractors (`substack_post`, `dev_to_article`) are host-bound and
+auto-dispatch.
 
 #### `magpie crawl <url>` — BFS crawl + extract a site
 
