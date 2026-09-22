@@ -448,5 +448,5 @@ func hashTask(t core.FetchTask) string {
 }
 
 func newRunID() string {
-	return strings.ReplaceAll(fmt.Sprintf("%d", time.Now().UnixNano()), "-", "") + "-crawl"
+	return fmt.Sprintf("%d-crawl", time.Now().UnixNano())
 }

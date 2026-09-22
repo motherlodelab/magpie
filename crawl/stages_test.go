@@ -61,6 +61,17 @@ func TestCheckCeiling_RunningCostTrips(t *testing.T) {
 	}
 }
 
+func TestCheckCeiling_FlatRateExempt(t *testing.T) {
+	// The --max-cost flag contract ("flat-rate providers codex, opencode-go
+	// exempt") is shared with scrape.CheckCostCeiling — crawl must honor it
+	// too; a flat bill can never trip a USD ceiling.
+	c := newCeilingContext(t, 1e-9)
+	c.opts.Provider = "opencode-go"
+	if err := c.checkCeiling("extract the price from this page"); err != nil {
+		t.Errorf("checkCeiling flat-rate = %v, want nil (exempt)", err)
+	}
+}
+
 func TestCheckCeiling_HeadroomPasses(t *testing.T) {
 	c := newCeilingContext(t, 100.00)
 	if err := c.db.LogLLMCall(c.runID, store.LLMCall{Provider: "fake", Model: "m", USDEstimate: 0.50, Purpose: "synth"}); err != nil {

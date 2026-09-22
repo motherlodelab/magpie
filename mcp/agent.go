@@ -267,22 +267,9 @@ func handleVertical(d Deps) func(context.Context, *sdk.CallToolRequest, Vertical
 // text with no validator. The prompt fan-out lives in scrape.Prompt;
 // this handler owns the content prep and the run.
 func extractPrompt(ctx context.Context, d Deps, in ExtractIn) (*sdk.CallToolResult, ExtractOut, error) {
-	ct := in.ContentType
-	if ct == "" {
-		ct = "html"
-	}
-	var markdown string
-	switch ct {
-	case "html":
-		cleaned, err := clean.Clean(ctx, clean.RawPage{HTML: []byte(in.Content)})
-		if err != nil {
-			return nil, ExtractOut{}, fmt.Errorf("mcp: extract_structured: %w", err)
-		}
-		markdown = cleaned.Markdown
-	case "markdown":
-		markdown = in.Content
-	default:
-		return nil, ExtractOut{}, fmt.Errorf("mcp: extract_structured: content_type %q must be html|markdown", ct)
+	markdown, _, err := prepContent(ctx, in)
+	if err != nil {
+		return nil, ExtractOut{}, err
 	}
 
 	runID := store.NewRunID()
