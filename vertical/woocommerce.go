@@ -1,13 +1,10 @@
 package vertical
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net/url"
 	"strings"
-
-	"github.com/PuerkitoBio/goquery"
 )
 
 func init() {
@@ -78,9 +75,9 @@ func extractWooCommerce(ctx context.Context, f Fetcher, u *url.URL) (map[string]
 		}
 	}
 	// DOM fallback: the .summary block Woo themes render.
-	doc, derr := goquery.NewDocumentFromReader(bytes.NewReader(body))
-	if derr != nil {
-		return nil, fmt.Errorf("vertical: woocommerce_product: parse html: %w", derr)
+	doc, err := parseHTML(body, "woocommerce_product")
+	if err != nil {
+		return nil, err
 	}
 	title := foldSpaces(doc.Find(".product_title").First().Text())
 	if title == "" {

@@ -1,7 +1,6 @@
 package vertical
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -33,9 +32,9 @@ func extractTrustpilot(ctx context.Context, f Fetcher, u *url.URL) (map[string]a
 	if err != nil {
 		return nil, err
 	}
-	doc, derr := goquery.NewDocumentFromReader(bytes.NewReader(body))
-	if derr != nil {
-		return nil, fmt.Errorf("vertical: trustpilot: parse html: %w", derr)
+	doc, err := parseHTML(body, "trustpilot")
+	if err != nil {
+		return nil, err
 	}
 	out := map[string]any{}
 	reviews := []any{}

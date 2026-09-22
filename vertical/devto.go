@@ -1,7 +1,6 @@
 package vertical
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net/url"
@@ -35,9 +34,9 @@ func extractDevTo(ctx context.Context, f Fetcher, u *url.URL) (map[string]any, e
 	if err != nil {
 		return nil, err
 	}
-	doc, derr := goquery.NewDocumentFromReader(bytes.NewReader(body))
-	if derr != nil {
-		return nil, fmt.Errorf("vertical: dev_to_article: parse html: %w", derr)
+	doc, err := parseHTML(body, "dev_to_article")
+	if err != nil {
+		return nil, err
 	}
 	rec := map[string]any{"url": u.String()}
 	if v := foldSpaces(doc.Find("h1.crayons-title").First().Text()); v != "" {

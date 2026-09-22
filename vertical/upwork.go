@@ -11,7 +11,6 @@ package vertical
 // best-effort until a clean-IP capture confirms the shape.
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -62,9 +61,9 @@ func extractUpwork(ctx context.Context, f Fetcher, u *url.URL) (map[string]any, 
 	if err != nil {
 		return nil, err
 	}
-	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(body))
+	doc, err := parseHTML(body, "upwork")
 	if err != nil {
-		return nil, fmt.Errorf("vertical: upwork: parse HTML: %w", err)
+		return nil, err
 	}
 
 	rec := map[string]any{"url": u.String(), "source": "meta"}

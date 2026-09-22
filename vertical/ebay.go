@@ -1,13 +1,10 @@
 package vertical
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net/url"
 	"strings"
-
-	"github.com/PuerkitoBio/goquery"
 )
 
 func init() {
@@ -72,9 +69,9 @@ func extractEbay(ctx context.Context, f Fetcher, u *url.URL) (map[string]any, er
 		}
 	}
 	// DOM fallback: the x- component classes eBay serves server-side.
-	doc, derr := goquery.NewDocumentFromReader(bytes.NewReader(body))
-	if derr != nil {
-		return nil, fmt.Errorf("vertical: ebay_item: parse html: %w", derr)
+	doc, err := parseHTML(body, "ebay_item")
+	if err != nil {
+		return nil, err
 	}
 	if v := foldSpaces(doc.Find("#itemTitle").First().Text()); v != "" {
 		rec["title"] = v

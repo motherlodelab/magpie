@@ -1,7 +1,6 @@
 package vertical
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net/url"
@@ -43,9 +42,9 @@ func extractAmazon(ctx context.Context, f Fetcher, u *url.URL) (map[string]any, 
 		return nil, err
 	}
 	// Amazon's JSON-LD is thin/inconsistent — DOM-first by design.
-	doc, derr := goquery.NewDocumentFromReader(bytes.NewReader(body))
-	if derr != nil {
-		return nil, fmt.Errorf("vertical: amazon_product: parse html: %w", derr)
+	doc, err := parseHTML(body, "amazon_product")
+	if err != nil {
+		return nil, err
 	}
 	rec := map[string]any{
 		"asin": amazonASIN(u), // from the URL, never the DOM

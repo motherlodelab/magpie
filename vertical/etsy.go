@@ -1,12 +1,9 @@
 package vertical
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net/url"
-
-	"github.com/PuerkitoBio/goquery"
 )
 
 func init() {
@@ -66,9 +63,9 @@ func extractEtsy(ctx context.Context, f Fetcher, u *url.URL) (map[string]any, er
 		}
 	}
 	// DOM fallback: no usable JSON-LD.
-	doc, derr := goquery.NewDocumentFromReader(bytes.NewReader(body))
-	if derr != nil {
-		return nil, fmt.Errorf("vertical: etsy_listing: parse html: %w", derr)
+	doc, err := parseHTML(body, "etsy_listing")
+	if err != nil {
+		return nil, err
 	}
 	title := foldSpaces(doc.Find(`h1[data-test-id="listing-page-title"]`).First().Text())
 	if title == "" {
