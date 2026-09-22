@@ -1,0 +1,46 @@
+# CI per spec §876: the default suite stays fast + hermetic (no network,
+# no browser); the //go:build browser suite runs as its own job with a
+# deterministic Chrome. Windows joins the matrix once proven (spec §951
+# DoD names it; ubuntu-first keeps day-one CI green).
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go build ./...
+      - run: go vet ./...
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.6
+      - run: go test ./...
+
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # Spec §876: browser-actions/setup-chrome for a pinned, cross-platform
+      # Chrome. go-rod's launcher discovers it on PATH and falls back to its
+      # own managed download when absent.
+      - uses: browser-actions/setup-chrome@v2
+      - run: go test -tags browser ./...
