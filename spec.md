@@ -772,8 +772,16 @@ magpie cache inspect --domain amazon.fr
   boundary). No `--country` flag: a country implies IP geo, which is
   already expressible as a proxy-pool entry; a fake knob would silently
   do nothing on direct connections.
-- **Vertical breadth (Phase V):** the registry is **21 extractors**, now
-  covering the schema.org standards wave — `job_posting` (JobPosting
+- **Vertical breadth (Phases V+W):** the registry is **27 extractors**.
+  Phase W adds six host/product verticals: `etsy_listing`, `ebay_item`
+  and `amazon_product` (marketplace listings — JSON-LD first with buy-box
+  DOM fallback, except amazon which is DOM-only by design; IDs from the
+  URL, never the page), `woocommerce_product` (any `/product/` permalink,
+  **OptIn** — the shape is nobody's host), `substack_post` (rewrites
+  `/p/{slug}` to the same-origin posts API, so custom-domain pubs work;
+  `Match` stays `*.substack.com`-ceiled) and `dev_to_article`
+  (crayons-class DOM selectors). This covers the earlier schema.org
+  standards wave — `job_posting` (JobPosting
   JSON-LD: Greenhouse/Lever/Ashby-style boards), `event` (Event +
   subtypes, online/physical disambiguation), `local_business`
   (LocalBusiness + subtypes, address/geo/hours), `article`
@@ -792,9 +800,8 @@ magpie cache inspect --domain amazon.fr
   our contract guarantees permissives never auto-fire — an always-on
   extractor would attach a `Record` to every scrape and silently change
   the default output shape for all users; explicit `--vertical og`/
-  MCP selection covers the use case honestly. Proprietary per-site
-  verticals (e.g. a desktop-only `amazon_product`) are not built here:
-  embedders register them at startup via `vertical.Register`.
+  MCP selection covers the use case honestly. Embedders register
+  proprietary per-site verticals at startup via `vertical.Register`.
   `crawl --status <run_id>`
   is CLI parity for the MCP poll (unknown id exits 4, handler-local).
 

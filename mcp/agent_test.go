@@ -503,8 +503,8 @@ func TestVertical_MCP(t *testing.T) {
 
 	list := decodeOut(t, callTool(t, cs, "list_extractors", map[string]any{}, ""))
 	exs, ok := list["extractors"].([]any)
-	if !ok || len(exs) != 21 {
-		t.Fatalf("extractors = %#v, want exactly 21 (10 pre-H + 5 Phase H + upwork_job + 5 Phase V)", list["extractors"])
+	if !ok || len(exs) != 27 {
+		t.Fatalf("extractors = %#v, want exactly 27 (10 pre-H + 5 Phase H + upwork_job + 5 Phase V + 6 Phase W)", list["extractors"])
 	}
 	names := map[string]bool{}
 	for _, e := range exs {

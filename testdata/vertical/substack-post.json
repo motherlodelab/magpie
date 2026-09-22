@@ -1,0 +1,11 @@
+{
+  "title": "Hello, world",
+  "subtitle": "A demo post",
+  "post_date": "2026-08-14T09:00:00Z",
+  "reaction_count": 823,
+  "comment_count": 47,
+  "cover_image": "https://substackcdn.com/cover.png",
+  "canonical_url": "https://demo.substack.com/p/hello-world",
+  "body_html": "<p>Hello <b>world</b>.</p><p>Second graph.</p>",
+  "publishedBylines": [{"id": 1, "name": "Jane Q. Writer", "handle": "janewriter"}]
+}
