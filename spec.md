@@ -923,6 +923,7 @@ magpie/
 │   ├── config.go  keyring.go     # zalando/go-keyring
 ├── build/                        # xcaddy-style compiler for `magpie build`
 ├── tui/                           # Bubble Tea interactive UI (Phase 4; see plan/phase-4-tui.md)
+├── benchmarks/                   # offline quality harness (test-only)
 └── testdata/
 ```
 
