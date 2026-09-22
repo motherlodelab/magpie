@@ -5,7 +5,7 @@ measured over the committed `testdata/` fixtures. **Offline, self-curated
 corpus** — this is not an independent web benchmark; see
 [limitations](methodology.md#limitations).
 
-## Headline (run `results/2026-09-24.json`)
+## Headline numbers (from `results/2026-09-24.json`)
 
 - **Fact fidelity: 100%** — 16/16 curated facts present in both markdown and
   llm output.

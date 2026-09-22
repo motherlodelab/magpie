@@ -217,18 +217,21 @@ func writeResultsFile(t *testing.T, rows []result) {
 			}
 		}
 	}
-	kept, total, red := 0, 0, 0.0
+	kept, total, red, n := 0, 0, 0.0, 0
 	for _, r := range rows {
 		kept += r.FactsKept
 		total += r.FactsTotal
 		if r.RawWords > 0 {
 			red += (1 - float64(r.MDWords)/float64(r.RawWords)) * 100
+			n++
 		}
 	}
 	if total > 0 {
 		out.Aggregates.FidelityPct = float64(kept) / float64(total) * 100
 	}
-	out.Aggregates.MeanReductionVsRawPct = red / float64(len(rows))
+	if n > 0 {
+		out.Aggregates.MeanReductionVsRawPct = red / float64(n)
+	}
 	data, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
 		t.Fatalf("marshal results: %v", err)

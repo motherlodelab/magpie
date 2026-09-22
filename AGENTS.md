@@ -1,7 +1,7 @@
 # AGENTS.md — magpie (`magpie`)
 
 Go CLI web scraper: fetch → clean → extract. Source of truth: `spec.md`.
-Binary name: `magpie`. Module: `magpie`. Requires Go 1.26+ (go-trafilatura v2).
+Binary name: `magpie`. Module: `github.com/motherlodelab/magpie`. Requires Go 1.26+ (go-trafilatura v2).
 
 ## Coding standard — read these
 
