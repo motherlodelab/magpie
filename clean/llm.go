@@ -125,6 +125,9 @@ var (
 	headingRe    = regexp.MustCompile(`(?m)^#{1,6}\s+`)
 	quoteRe      = regexp.MustCompile(`(?m)^\s*>\s?`)
 	fenceRe      = regexp.MustCompile("`{3}[^`]*`{3}")
+	spacesRe     = regexp.MustCompile(`[ \t]+`)
+	lineLeadRe   = regexp.MustCompile(`(?m)^[ \t]+`)
+	multiBlankRe = regexp.MustCompile(`\n{3,}`)
 )
 
 // llmBody cleans markdown line-by-line and extracts deduped links.
@@ -353,9 +356,9 @@ func ToText(md string) string {
 	s = fenceRe.ReplaceAllString(s, "")
 	s = strings.ReplaceAll(s, "`", "")
 	s = strings.ReplaceAll(s, "*", "")
-	s = regexp.MustCompile(`[ \t]+`).ReplaceAllString(s, " ")
-	s = regexp.MustCompile(`(?m)^[ \t]+`).ReplaceAllString(s, "")
-	s = regexp.MustCompile(`\n{3,}`).ReplaceAllString(s, "\n\n")
+	s = spacesRe.ReplaceAllString(s, " ")
+	s = lineLeadRe.ReplaceAllString(s, "")
+	s = multiBlankRe.ReplaceAllString(s, "\n\n")
 	return strings.TrimSpace(s)
 }
 

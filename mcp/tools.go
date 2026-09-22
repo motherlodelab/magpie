@@ -2,12 +2,10 @@ package mcp
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/motherlodelab/magpie/clean"
 	"github.com/motherlodelab/magpie/crawl"
@@ -202,7 +200,7 @@ func handleCrawl(d Deps) func(context.Context, *sdk.CallToolRequest, CrawlIn) (*
 		if d.ScrapeDeps.APIKeyFor != nil {
 			key = d.ScrapeDeps.APIKeyFor(d.DefaultProvider)
 		}
-		runID := newRunID()
+		runID := store.NewRunID()
 		ex, err := d.ScrapeDeps.ExtractorFor(d.DefaultProvider, key, d.DefaultModel, sch, runID)
 		if err != nil {
 			return nil, CrawlOut{}, fmt.Errorf("mcp: crawl_site: %w", err)
@@ -330,7 +328,7 @@ func handleExtract(d Deps) func(context.Context, *sdk.CallToolRequest, ExtractIn
 			return nil, ExtractOut{}, fmt.Errorf("mcp: extract_structured: content_type %q must be html|markdown", ct)
 		}
 
-		runID := newRunID()
+		runID := store.NewRunID()
 		if err := d.DB.BeginRun(runID, "mcp-extract"); err != nil {
 			return nil, ExtractOut{}, fmt.Errorf("mcp: extract_structured: %w", err)
 		}
@@ -356,12 +354,7 @@ func handleExtract(d Deps) func(context.Context, *sdk.CallToolRequest, ExtractIn
 			return nil, ExtractOut{}, fmt.Errorf("mcp: extract_structured: %w", err)
 		}
 		finish(1, "finished")
-		return nil, ExtractOut{Extracted: res.Record, Usage: map[string]any{
-			"provider": res.Provider, "model": res.Model,
-			"prompt_tokens":     res.Usage.PromptTokens,
-			"completion_tokens": res.Usage.CompletionTokens,
-			"usd_estimate":      res.Usage.USDEstimate,
-		}}, nil
+		return nil, ExtractOut{Extracted: res.Record, Usage: extract.UsageMap(res.Provider, res.Model, res.Usage)}, nil
 	}
 }
 
@@ -418,13 +411,4 @@ func handleSelectors(d Deps) func(context.Context, *sdk.CallToolRequest, Selecto
 		}
 		return nil, out, nil
 	}
-}
-
-func newRunID() string {
-	var b [8]byte
-	if _, err := rand.Read(b[:]); err == nil {
-		return fmt.Sprintf("%x-%d", b, os.Getpid())
-	}
-	// ponytail: timestamp+pid fallback on RNG failure.
-	return fmt.Sprintf("%d-%d", time.Now().UnixNano(), os.Getpid())
 }

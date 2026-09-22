@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/motherlodelab/magpie/scrape"
 )
 
 func TestBatch_MixedExit0(t *testing.T) {
@@ -318,7 +320,7 @@ func TestAutoProviders_Order(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := autoProviders(cfg)
+	got := scrape.AutoCandidates(cfg.APIKey)
 	// Keyless local/CLI providers always qualify, last in documented order.
 	if len(got) != 2 || got[0] != "ollama" || got[1] != "codex" {
 		t.Fatalf("keyless auto = %v, want [ollama codex]", got)
@@ -329,7 +331,7 @@ func TestAutoProviders_Order(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got = autoProviders(cfg)
+	got = scrape.AutoCandidates(cfg.APIKey)
 	if len(got) != 4 || got[0] != "anthropic" || got[1] != "openai" {
 		t.Fatalf("keyed auto = %v, want keyed-first in priority order", got)
 	}

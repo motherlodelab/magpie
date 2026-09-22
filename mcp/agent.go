@@ -12,7 +12,9 @@ import (
 
 	"github.com/motherlodelab/magpie/clean"
 	"github.com/motherlodelab/magpie/crawl"
+	"github.com/motherlodelab/magpie/extract"
 	"github.com/motherlodelab/magpie/scrape"
+	"github.com/motherlodelab/magpie/store"
 	"github.com/motherlodelab/magpie/vertical"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -134,12 +136,7 @@ func handleSummarize(d Deps) func(context.Context, *sdk.CallToolRequest, Summari
 		if err != nil {
 			return nil, SummarizeOut{}, fmt.Errorf("mcp: summarize: %w", err)
 		}
-		return nil, SummarizeOut{URL: res.URL, Title: res.Title, Summary: res.Summary, Usage: map[string]any{
-			"provider": res.Provider, "model": res.Model,
-			"prompt_tokens":     res.Usage.PromptTokens,
-			"completion_tokens": res.Usage.CompletionTokens,
-			"usd_estimate":      res.Usage.USDEstimate,
-		}}, nil
+		return nil, SummarizeOut{URL: res.URL, Title: res.Title, Summary: res.Summary, Usage: extract.UsageMap(res.Provider, res.Model, res.Usage)}, nil
 	}
 }
 
@@ -288,7 +285,7 @@ func extractPrompt(ctx context.Context, d Deps, in ExtractIn) (*sdk.CallToolResu
 		return nil, ExtractOut{}, fmt.Errorf("mcp: extract_structured: content_type %q must be html|markdown", ct)
 	}
 
-	runID := newRunID()
+	runID := store.NewRunID()
 	if err := d.DB.BeginRun(runID, "mcp-extract"); err != nil {
 		return nil, ExtractOut{}, fmt.Errorf("mcp: extract_structured: %w", err)
 	}
@@ -307,12 +304,7 @@ func extractPrompt(ctx context.Context, d Deps, in ExtractIn) (*sdk.CallToolResu
 		return nil, ExtractOut{}, fmt.Errorf("mcp: extract_structured: %w", err)
 	}
 	finish(1, "finished")
-	return nil, ExtractOut{Content: pr.Text, Usage: map[string]any{
-		"provider": pr.Provider, "model": d.DefaultModel,
-		"prompt_tokens":     pr.Usage.PromptTokens,
-		"completion_tokens": pr.Usage.CompletionTokens,
-		"usd_estimate":      pr.Usage.USDEstimate,
-	}}, nil
+	return nil, ExtractOut{Content: pr.Text, Usage: extract.UsageMap(pr.Provider, d.DefaultModel, pr.Usage)}, nil
 }
 
 // --- search ---

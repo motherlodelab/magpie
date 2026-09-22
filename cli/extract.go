@@ -114,7 +114,7 @@ func runExtract(ctx context.Context, o extractOptions) error {
 		model = "claude-sonnet-5"
 	}
 	key := cfg.APIKey(provider)
-	if provider != "auto" && key == "" && needsAPIKey(provider) {
+	if provider != "auto" && key == "" && extract.NeedsAPIKey(provider) {
 		return missingKeyErr(provider)
 	}
 
@@ -123,9 +123,14 @@ func runExtract(ctx context.Context, o extractOptions) error {
 		return err
 	}
 	defer closeDB(db)
-	runID := uuidNew()
+	runID := store.NewRunID()
 	if err := db.BeginRun(runID, "extract"); err != nil {
 		return err
+	}
+	finish := func(ok, er int, status string) {
+		if ferr := db.FinishRun(runID, ok, er, status); ferr != nil {
+			fmt.Fprintf(os.Stderr, "warning: finish run: %v\n", ferr)
+		}
 	}
 
 	if o.Prompt != "" {
@@ -137,10 +142,8 @@ func runExtract(ctx context.Context, o extractOptions) error {
 		return err
 	}
 
-	if err := checkCostCeiling(db, runID, provider, model, cleaned.Markdown, cfg.MaxCost); err != nil {
-		if ferr := db.FinishRun(runID, 0, 0, "error"); ferr != nil {
-			fmt.Fprintf(os.Stderr, "warning: finish run: %v\n", ferr)
-		}
+	if err := scrape.CheckCostCeiling(db, runID, provider, model, cleaned.Markdown, cfg.MaxCost); err != nil {
+		finish(0, 0, "error")
 		return err
 	}
 
@@ -148,14 +151,10 @@ func runExtract(ctx context.Context, o extractOptions) error {
 		Markdown: cleaned.Markdown, StructuredData: cleaned.StructuredData, Schema: sch,
 	})
 	if err != nil {
-		if ferr := db.FinishRun(runID, 0, 1, "error"); ferr != nil {
-			fmt.Fprintf(os.Stderr, "warning: finish run: %v\n", ferr)
-		}
+		finish(0, 1, "error")
 		return err
 	}
-	if ferr := db.FinishRun(runID, 1, 0, "finished"); ferr != nil {
-		fmt.Fprintf(os.Stderr, "warning: finish run: %v\n", ferr)
-	}
+	finish(1, 0, "finished")
 	doc, merr := marshalOut(map[string]any{"extracted": res.Record}, "extract")
 	if merr != nil {
 		return merr
@@ -173,7 +172,7 @@ func runExtractPrompt(ctx context.Context, db *store.DB, runID string, cfg confi
 			fmt.Fprintf(os.Stderr, "warning: finish run: %v\n", ferr)
 		}
 	}
-	if provider == "auto" && len(autoProviders(cfg)) == 0 {
+	if provider == "auto" && len(scrape.AutoCandidates(cfg.APIKey)) == 0 {
 		finish(0, 0, "error")
 		return fail(2, "extract: --provider auto: no provider has a key (tried %s)", strings.Join(scrape.AutoProviderOrder, ", "))
 	}

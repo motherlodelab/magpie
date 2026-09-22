@@ -5,7 +5,6 @@ package scrape
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -239,7 +238,7 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 		explicit = &ex
 	}
 
-	runID := uuidNew()
+	runID := store.NewRunID()
 	if err := d.DB.BeginRun(runID, "scrape"); err != nil {
 		return Result{}, err
 	}
@@ -366,7 +365,7 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 	if d.APIKeyFor != nil {
 		key = d.APIKeyFor(provider)
 	}
-	if key == "" && needsAPIKey(provider) {
+	if key == "" && extract.NeedsAPIKey(provider) {
 		finish(0, 0, "error")
 		return Result{}, fmt.Errorf("scrape: provider %s: %w", provider, ErrMissingKey)
 	}
@@ -389,9 +388,9 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 	}
 
 	promptText := "Extract structured data.\n" + string(cleaned.StructuredData) + "\n" + cleaned.Markdown
-	if err := checkCostCeiling(d.DB, runID, provider, model, promptText, o.MaxCost); err != nil {
+	if err := CheckCostCeiling(d.DB, runID, provider, model, promptText, o.MaxCost); err != nil {
 		finish(0, 0, "error")
-		return Result{}, err
+		return Result{}, fmt.Errorf("scrape: %w", err)
 	}
 
 	res, err := ex.Extract(ctx, extract.ExtractInput{
@@ -586,16 +585,11 @@ func selectorApply(docJSON string, sch *extract.Schema, html []byte, sidecar jso
 	return selector.NewApplier(doc, sch).Apply(string(html), sidecar)
 }
 
-func needsAPIKey(p string) bool {
-	switch strings.ToLower(p) {
-	case "ollama", "codex", "":
-		return false
-	}
-	return true
-}
-
-// checkCostCeiling reuses crawl.ErrCostCeiling — no second sentinel.
-func checkCostCeiling(db *store.DB, runID, provider, model, promptText string, maxCost float64) error {
+// CheckCostCeiling reuses crawl.ErrCostCeiling — no second sentinel.
+// Exported so the CLI (crawl/extract/heal) and the desktop app share this
+// one guard and the fail-closed semantics can't drift between surfaces.
+// The message carries no package prefix — callers add context when wrapping.
+func CheckCostCeiling(db *store.DB, runID, provider, model, promptText string, maxCost float64) error {
 	if maxCost <= 0 {
 		return nil
 	}
@@ -613,16 +607,7 @@ func checkCostCeiling(db *store.DB, runID, provider, model, promptText string, m
 		}
 	}
 	if running+proj > maxCost {
-		return fmt.Errorf("scrape: running %.6f + projected %.6f > max %.6f: %w", running, proj, maxCost, crawl.ErrCostCeiling)
+		return fmt.Errorf("running %.6f + projected %.6f > max %.6f: %w", running, proj, maxCost, crawl.ErrCostCeiling)
 	}
 	return nil
-}
-
-func uuidNew() string {
-	var b [8]byte
-	if _, err := rand.Read(b[:]); err == nil {
-		return fmt.Sprintf("%x-%d", b, os.Getpid())
-	}
-	// ponytail: timestamp+pid fallback on RNG failure; collision needs same-ns fork + broken RNG.
-	return fmt.Sprintf("%d-%d", time.Now().UnixNano(), os.Getpid())
 }

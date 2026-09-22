@@ -239,7 +239,7 @@ func TestProxy_SecurityMatrix(t *testing.T) {
 		// dial gets the pool entry's trusted-egress decision.
 		var originHits atomic.Int64
 		origin := hitOrigin(t, &originHits, func(w http.ResponseWriter, _ *http.Request) {
-			_, _ = w.Write([]byte("via tor"))
+			_, _ = w.Write([]byte("via tor")) //nolint:errcheck // test body write; check-blank flags explicit blanks
 		})
 		socks, conns, requested := fakeSOCKS5(t, mustURL(t, origin.URL))
 		t.Setenv("MAGPIE_PROXY", "")

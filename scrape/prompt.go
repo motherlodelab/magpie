@@ -48,7 +48,7 @@ func Prompt(ctx context.Context, d Deps, runID string, o PromptOptions) (PromptR
 	}
 	providers := []string{o.Provider}
 	if o.Provider == "auto" {
-		providers = autoCandidates(d)
+		providers = AutoCandidates(d.keyFor)
 		if len(providers) == 0 {
 			return PromptResult{}, fmt.Errorf("scrape: prompt: --provider auto: no provider has a key (tried %s)", strings.Join(AutoProviderOrder, ", "))
 		}
@@ -60,15 +60,15 @@ func Prompt(ctx context.Context, d Deps, runID string, o PromptOptions) (PromptR
 		if d.APIKeyFor != nil {
 			key = d.APIKeyFor(p)
 		}
-		if key == "" && needsAPIKey(p) {
+		if key == "" && extract.NeedsAPIKey(p) {
 			merr := fmt.Errorf("scrape: provider %s: %w", p, ErrMissingKey)
 			if o.Provider != "auto" {
 				return PromptResult{}, merr
 			}
 			continue // auto pre-filters, but a nil APIKeyFor still guards here
 		}
-		if err := checkCostCeiling(d.DB, runID, p, o.Model, o.User, o.MaxCost); err != nil {
-			return PromptResult{}, err
+		if err := CheckCostCeiling(d.DB, runID, p, o.Model, o.User, o.MaxCost); err != nil {
+			return PromptResult{}, fmt.Errorf("scrape: %w", err)
 		}
 		attempted = append(attempted, p)
 		ex, err := d.ExtractorFor(p, key, o.Model, nil, runID)
@@ -112,18 +112,26 @@ func Prompt(ctx context.Context, d Deps, runID string, o PromptOptions) (PromptR
 	return PromptResult{}, fmt.Errorf("scrape: prompt: all providers failed (%s): %v", strings.Join(attempted, ", "), lastErr)
 }
 
-// autoCandidates returns the AutoProviderOrder entries usable without a
-// missing key: keyed providers need APIKeyFor to yield a key, keyless
-// (ollama/codex/"") always qualify.
-func autoCandidates(d Deps) []string {
+// AutoCandidates returns the AutoProviderOrder entries usable with the
+// given key resolver: keyed providers need a non-empty key, keyless
+// (ollama/codex) always qualify. One home — Prompt and the CLI's
+// --provider auto pre-flight share the exact filter.
+func AutoCandidates(keyFor func(string) string) []string {
 	var out []string
 	for _, p := range AutoProviderOrder {
-		if needsAPIKey(p) {
-			if d.APIKeyFor == nil || d.APIKeyFor(p) == "" {
-				continue
-			}
+		if extract.NeedsAPIKey(p) && keyFor(p) == "" {
+			continue
 		}
 		out = append(out, p)
 	}
 	return out
+}
+
+// keyFor adapts the optional APIKeyFor seam into a plain lookup for
+// AutoCandidates (nil seam → no keys → keyless providers only).
+func (d Deps) keyFor(p string) string {
+	if d.APIKeyFor == nil {
+		return ""
+	}
+	return d.APIKeyFor(p)
 }
