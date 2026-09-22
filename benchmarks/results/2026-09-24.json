@@ -1,0 +1,88 @@
+{
+  "generated_at": "2026-09-22T08:21:15Z",
+  "go_version": "go1.26.5",
+  "commit": "",
+  "aggregates": {
+    "fidelity_pct": 100,
+    "mean_reduction_vs_raw_pct": 18.12825892580494
+  },
+  "per_fixture": [
+    {
+      "fixture": "article",
+      "raw_words": 135,
+      "md_words": 120,
+      "llm_tokens": 236,
+      "md_chars": 1042,
+      "llm_chars": 945,
+      "facts_kept": 5,
+      "facts_total": 5,
+      "clean_ns": 3707494
+    },
+    {
+      "fixture": "product",
+      "raw_words": 84,
+      "md_words": 70,
+      "llm_tokens": 232,
+      "md_chars": 440,
+      "llm_chars": 931,
+      "facts_kept": 5,
+      "facts_total": 5,
+      "clean_ns": 3205142
+    },
+    {
+      "fixture": "spa-shell",
+      "raw_words": 9,
+      "md_words": 7,
+      "llm_tokens": 13,
+      "md_chars": 41,
+      "llm_chars": 54,
+      "facts_kept": 1,
+      "facts_total": 1,
+      "clean_ns": 1242752
+    },
+    {
+      "fixture": "challenge-akamai",
+      "raw_words": 22,
+      "md_words": 16,
+      "llm_tokens": 32,
+      "md_chars": 110,
+      "llm_chars": 131,
+      "facts_kept": 0,
+      "facts_total": 0,
+      "clean_ns": 1209265
+    },
+    {
+      "fixture": "login-wall",
+      "raw_words": 15,
+      "md_words": 11,
+      "llm_tokens": 21,
+      "md_chars": 63,
+      "llm_chars": 87,
+      "facts_kept": 0,
+      "facts_total": 0,
+      "clean_ns": 948174
+    },
+    {
+      "fixture": "empty-shell",
+      "raw_words": 9,
+      "md_words": 7,
+      "llm_tokens": 13,
+      "md_chars": 41,
+      "llm_chars": 54,
+      "facts_kept": 0,
+      "facts_total": 0,
+      "clean_ns": 1037967
+    },
+    {
+      "fixture": "rich-with-marker",
+      "raw_words": 815,
+      "md_words": 809,
+      "llm_tokens": 1415,
+      "md_chars": 5516,
+      "llm_chars": 5661,
+      "facts_kept": 5,
+      "facts_total": 5,
+      "clean_ns": 8508460
+    }
+  ]
+}

@@ -38,6 +38,7 @@ cmd/magpie/      # 10-line shim (os.Exit(cli.Execute()))
 cli/             # Cobra tree (importable; custom binaries link here)
 core/         # module registry, pipeline wiring
 fetch/ clean/ extract/ selector/ crawl/ store/ mcp/ plugin/ config/
+benchmarks/   # offline quality harness (test-only)
 testdata/     # golden fixtures
 plan/         # big-plan.md + phase-N.md planning artifacts
 ```
