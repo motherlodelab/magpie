@@ -28,12 +28,22 @@ jobs:
         run: test -z "$(gofmt -l .)"
       - uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.6
+          # Must be built with go >= the go.mod toolchain (v2.6/go1.25
+          # can't even load the config against go 1.26).
+          version: v2.13.2
+      # The build package's hermetic tests (GOPROXY=off) resolve the whole
+      # module graph from the cache alone; `all` also warms go.sum-only
+      # modules (murmur3, go-re2) that plain go build never downloads.
+      - run: go mod download all
       - run: go test ./...
 
   browser:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      # GH runners have no SUID/userns sandbox; Chrome aborts at zygote
+      # init without --no-sandbox. Explicit opt-in seam in fetch/rod.go.
+      MAGPIE_CHROME_NO_SANDBOX: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -43,4 +53,8 @@ jobs:
       # Chrome. go-rod's launcher discovers it on PATH and falls back to its
       # own managed download when absent.
       - uses: browser-actions/setup-chrome@v2
+      - run: go mod download all
+      # Warm rod's managed chromium with a stdout-agnostic smoke test so the
+      # ~150MB download (cold cache) never pollutes captured-stdout asserts.
+      - run: go test -tags browser -run TestRodSmoke ./fetch/
       - run: go test -tags browser ./...

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
 	"time"
 
 	"github.com/go-rod/rod"
@@ -66,6 +67,11 @@ func (r *RodFetcher) ensureBrowser() error {
 		return nil
 	}
 	l := launcher.New()
+	// Explicit opt-in for environments without a SUID/userns sandbox (CI
+	// runners, some containers) — Chrome aborts at zygote init otherwise.
+	if os.Getenv("MAGPIE_CHROME_NO_SANDBOX") == "1" {
+		l.NoSandbox(true)
+	}
 	if r.Proxy != "" {
 		u, err := ValidateRequestProxy(r.Proxy)
 		if err != nil {
