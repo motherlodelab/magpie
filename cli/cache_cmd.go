@@ -10,6 +10,7 @@ import (
 	"github.com/motherlodelab/magpie/clean"
 	"github.com/motherlodelab/magpie/extract"
 	"github.com/motherlodelab/magpie/fetch"
+	"github.com/motherlodelab/magpie/scrape"
 	"github.com/motherlodelab/magpie/selector"
 	"github.com/motherlodelab/magpie/store"
 
@@ -158,15 +159,15 @@ func runCacheHeal(cmd *cobra.Command, _ []string) error {
 		model = modelFlag
 	}
 	key := cfg.APIKey(provider)
-	if key == "" && needsAPIKey(provider) {
+	if key == "" && extract.NeedsAPIKey(provider) {
 		return missingKeyErr(provider)
 	}
-	db, err := store.Open(cfg.CacheDB)
+	db, err := openCmdDB(cfg)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = db.Close() }() //nolint:errcheck // end of command; close unactionable
-	runID := uuidNew()
+	defer closeDB(db)
+	runID := store.NewRunID()
 	if err := db.BeginRun(runID, "cache-heal"); err != nil {
 		return err
 	}
@@ -198,7 +199,7 @@ func runCacheHeal(cmd *cobra.Command, _ []string) error {
 		if cerr != nil {
 			continue
 		}
-		if cerr := checkCostCeiling(db, runID, provider, model, cleaned.Markdown, cfg.MaxCost); cerr != nil {
+		if cerr := scrape.CheckCostCeiling(db, runID, provider, model, cleaned.Markdown, cfg.MaxCost); cerr != nil {
 			return cerr
 		}
 		res, xerr := ex.Extract(ctx, extract.ExtractInput{

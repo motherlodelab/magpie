@@ -5,7 +5,6 @@ import (
 
 	"github.com/motherlodelab/magpie/extract"
 	"github.com/motherlodelab/magpie/scrape"
-	"github.com/motherlodelab/magpie/store"
 
 	"github.com/spf13/cobra"
 )
@@ -54,19 +53,13 @@ func runSummarize(ctx context.Context, rawURL string, o summarizeOptions) error 
 		model = o.Model
 	}
 
-	db, err := store.Open(cfg.CacheDB)
+	db, err := openCmdDB(cfg)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = db.Close() }() //nolint:errcheck // end of command; close error unactionable
+	defer closeDB(db)
 
-	res, err := scrape.Summarize(ctx, scrape.Deps{
-		DB: db,
-		ExtractorFor: func(p, key, m string, s *extract.Schema, runID string) (extract.Extractor, error) {
-			return newExtractor(p, key, m, s, db, runID)
-		},
-		APIKeyFor: cfg.APIKey,
-	}, rawURL, scrape.SummarizeOptions{
+	res, err := scrape.Summarize(ctx, scrapeDeps(db, cfg), rawURL, scrape.SummarizeOptions{
 		MaxSentences: o.MaxSentences, Provider: provider, Model: model, MaxCost: cfg.MaxCost,
 	})
 	if err != nil {
@@ -75,12 +68,7 @@ func runSummarize(ctx context.Context, rawURL string, o summarizeOptions) error 
 	doc, merr := marshalOut(map[string]any{
 		"url": res.URL, "final_url": res.FinalURL, "title": res.Title,
 		"summary": res.Summary, "provider": res.Provider, "model": res.Model,
-		"usage": map[string]any{
-			"provider": res.Provider, "model": res.Model,
-			"prompt_tokens":     res.Usage.PromptTokens,
-			"completion_tokens": res.Usage.CompletionTokens,
-			"usd_estimate":      res.Usage.USDEstimate,
-		},
+		"usage": extract.UsageMap(res.Provider, res.Model, res.Usage),
 	}, "summarize")
 	if merr != nil {
 		return merr

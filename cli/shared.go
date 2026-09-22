@@ -1,16 +1,13 @@
 package cli
 
 import (
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/motherlodelab/magpie/config"
-	"github.com/motherlodelab/magpie/crawl"
 	"github.com/motherlodelab/magpie/extract"
 	"github.com/motherlodelab/magpie/fetch"
 	"github.com/motherlodelab/magpie/scrape"
@@ -94,53 +91,6 @@ func keyHint(err error) error {
 	return err
 }
 
-// autoProviders filters scrape.AutoProviderOrder to usable providers:
-// keyed entries need a configured key, keyless (ollama/codex) always
-// qualify. The canonical order lives in scrape (Summarize needs it too);
-// this is the CLI view over the same list.
-func autoProviders(cfg config.Config) []string {
-	var out []string
-	for _, p := range scrape.AutoProviderOrder {
-		if needsAPIKey(p) && cfg.APIKey(p) == "" {
-			continue
-		}
-		out = append(out, p)
-	}
-	return out
-}
-
-// checkCostCeiling fails closed: an unknown running total aborts before any
-// LLM spend. promptText is the full prompt that ProjectedCost prices.
-// Flat-rate providers (codex, opencode-go) bill the subscription, not the
-// call, so the ceiling exempts them immediately instead of projecting a
-// bogus per-token floor.
-func checkCostCeiling(db *store.DB, runID, provider, model, promptText string, maxCost float64) error {
-	if maxCost <= 0 {
-		return nil
-	}
-	if extract.IsFlatRateProvider(provider) {
-		return nil
-	}
-	running, err := db.RunCost(runID)
-	if err != nil {
-		return err // fail closed: never spend against an unknown total
-	}
-	proj := extract.ProjectedCost(model, promptText)
-	// When price is unknown (0), any positive ceiling with real content aborts:
-	// estimate prompt tokens × a reference floor so a near-zero ceiling trips.
-	if proj == 0 {
-		if toks := extract.EstimatePromptTokens(promptText); toks > 0 {
-			proj = float64(toks) / 1e6 * 2.00 // reference input price floor
-		}
-	}
-	if running+proj > maxCost {
-		// crawl.ErrCostCeiling's text ("cost ceiling exceeded") ends the
-		// message — don't repeat it in front.
-		return fmt.Errorf("running %.6f + projected %.6f > max %.6f: %w", running, proj, maxCost, crawl.ErrCostCeiling)
-	}
-	return nil
-}
-
 type markdownOut struct {
 	URL            string             `json:"url"`
 	FinalURL       string             `json:"final_url"`
@@ -185,23 +135,4 @@ func writeOut(path, s string) error {
 		return fmt.Errorf("write out: %w", err)
 	}
 	return nil
-}
-
-// needsAPIKey reports whether a provider needs an API key: ollama is local,
-// codex shells out to the user's own logged-in CLI.
-func needsAPIKey(p string) bool {
-	switch strings.ToLower(p) {
-	case "ollama", "codex":
-		return false
-	}
-	return true
-}
-
-func uuidNew() string {
-	var b [8]byte
-	if _, err := rand.Read(b[:]); err == nil {
-		return fmt.Sprintf("%x-%d", b, os.Getpid())
-	}
-	// ponytail: timestamp+pid fallback on RNG failure; collision needs same-ns fork + broken RNG.
-	return fmt.Sprintf("%d-%d", time.Now().UnixNano(), os.Getpid())
 }

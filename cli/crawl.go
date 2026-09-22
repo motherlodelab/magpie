@@ -212,7 +212,7 @@ func runCrawl(ctx context.Context, seedURL string, o crawlCLIOptions) error {
 	var sch *extract.Schema
 	if !o.Corpus {
 		key = cfg.APIKey(provider)
-		if key == "" && needsAPIKey(provider) {
+		if key == "" && extract.NeedsAPIKey(provider) {
 			return missingKeyErr(provider)
 		}
 		var lerr error
@@ -241,7 +241,7 @@ func runCrawl(ctx context.Context, seedURL string, o crawlCLIOptions) error {
 	runID := o.Resume
 	resuming := runID != ""
 	if !resuming {
-		runID = uuidNew()
+		runID = store.NewRunID()
 	}
 	var ex extract.Extractor
 	var propose selector.ProposeFunc
@@ -336,7 +336,7 @@ func wireExtractor(provider, key, model string, sch *extract.Schema, db *store.D
 		if err != nil {
 			return nil, err
 		}
-		if cerr := checkCostCeiling(db, runID, provider, model, trimmed, maxCost); cerr != nil {
+		if cerr := scrape.CheckCostCeiling(db, runID, provider, model, trimmed, maxCost); cerr != nil {
 			return nil, cerr
 		}
 		res, xerr := pex.Extract(pctx, extract.ExtractInput{

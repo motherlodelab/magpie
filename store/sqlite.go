@@ -1,6 +1,7 @@
 package store
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -176,6 +177,19 @@ func (d *DB) migrateRunHistory() error {
 func sha256Hex(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
+}
+
+// NewRunID mints a run_history key: 8 random bytes + pid, so concurrent
+// processes never collide and the id stays readable in logs. Falls back
+// to timestamp+pid when the RNG fails (collision then needs a same-ns
+// fork + broken RNG). Single home — cli, scrape, and mcp all mint run
+// ids through this.
+func NewRunID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err == nil {
+		return fmt.Sprintf("%x-%d", b, os.Getpid())
+	}
+	return fmt.Sprintf("%d-%d", time.Now().UnixNano(), os.Getpid())
 }
 
 func (d *DB) Close() error { return d.db.Close() }

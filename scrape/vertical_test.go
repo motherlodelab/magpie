@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -15,8 +16,6 @@ import (
 	"github.com/motherlodelab/magpie/fetch"
 	"github.com/motherlodelab/magpie/scrape"
 	"github.com/motherlodelab/magpie/selector"
-	"net/url"
-
 	"github.com/motherlodelab/magpie/vertical"
 )
 

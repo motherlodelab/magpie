@@ -31,6 +31,19 @@ var providers = []Provider{
 	{Name: "opencode-zen", NeedsKey: true},
 }
 
+// UsageMap shapes one TokenUsage for the JSON envelopes the CLI and MCP
+// tool outputs share — one constructor so the agent-facing usage keys
+// (provider, model, prompt_tokens, completion_tokens, usd_estimate)
+// can never drift between surfaces.
+func UsageMap(provider, model string, u TokenUsage) map[string]any {
+	return map[string]any{
+		"provider": provider, "model": model,
+		"prompt_tokens":     u.PromptTokens,
+		"completion_tokens": u.CompletionTokens,
+		"usd_estimate":      u.USDEstimate,
+	}
+}
+
 // Providers returns every supported LLM provider in canonical order.
 // The one home for the provider list — derive help text, key checks and
 // settings UIs from this, never from a hand-copied literal.
@@ -47,6 +60,23 @@ func ProviderNames() []string {
 		out[i] = p.Name
 	}
 	return out
+}
+
+// NeedsAPIKey reports whether provider requires an API key, derived from
+// the registry (the Provider.NeedsKey field is the one home for the
+// decision — hand-copied switches drift). "" stays keyless (scrape.Run's
+// empty-provider path resolves the adapter later); unknown names fail
+// closed (keyed) so a typo'd provider never spends silently.
+func NeedsAPIKey(provider string) bool {
+	if provider == "" {
+		return false
+	}
+	for _, p := range providers {
+		if p.Name == strings.ToLower(provider) {
+			return p.NeedsKey
+		}
+	}
+	return true
 }
 
 // BuildExtractor constructs the provider adapter for provider (case-

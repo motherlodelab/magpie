@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/motherlodelab/magpie/extract"
+	"github.com/motherlodelab/magpie/store"
 )
 
 // MaxSummarizeInputWords caps the markdown fed to the prompt (cost bound).
@@ -53,7 +54,7 @@ func Summarize(ctx context.Context, d Deps, rawURL string, o SummarizeOptions) (
 	input := capWords(res.Markdown, MaxSummarizeInputWords)
 	system := fmt.Sprintf("Summarize the page in at most %d sentences. Reply with plain text only, no JSON, no markdown formatting.", n)
 
-	runID := uuidNew()
+	runID := store.NewRunID()
 	if err := d.DB.BeginRun(runID, "summarize"); err != nil {
 		return SummaryOut{}, err
 	}
