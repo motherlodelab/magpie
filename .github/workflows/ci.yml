@@ -40,6 +40,10 @@ jobs:
   browser:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      # GH runners have no SUID/userns sandbox; Chrome aborts at zygote
+      # init without --no-sandbox. Explicit opt-in seam in fetch/rod.go.
+      MAGPIE_CHROME_NO_SANDBOX: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -54,7 +58,3 @@ jobs:
       # ~150MB download (cold cache) never pollutes captured-stdout asserts.
       - run: go test -tags browser -run TestRodSmoke ./fetch/
       - run: go test -tags browser ./...
-        env:
-          # GH runners have no SUID/userns sandbox; Chrome aborts at zygote
-          # init without --no-sandbox. Explicit opt-in seam in fetch/rod.go.
-          MAGPIE_CHROME_NO_SANDBOX: "1"
