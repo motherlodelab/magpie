@@ -91,6 +91,19 @@ func ProjectedCost(model, prompt string) float64 {
 	return float64(EstimatePromptTokens(prompt)) / 1e6 * in
 }
 
+// ProjectedCostWithFallback is ProjectedCost with a $2/1M-token fallback
+// for unknown-priced models, so --max-cost can still trip. Single home for
+// the ceiling projection — the scrape and crawl gates must not drift apart.
+func ProjectedCostWithFallback(model, promptText string) float64 {
+	proj := ProjectedCost(model, promptText)
+	if proj == 0 {
+		if toks := EstimatePromptTokens(promptText); toks > 0 {
+			proj = float64(toks) / 1e6 * 2.00
+		}
+	}
+	return proj
+}
+
 func isFreeModel(model string) bool {
 	m := strings.ToLower(model)
 	return strings.HasPrefix(m, "ollama/") || strings.HasPrefix(m, "llama")

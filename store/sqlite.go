@@ -268,11 +268,15 @@ type RunInfo struct {
 	Proxy            string
 }
 
+// runCols is the run_history column list scanned into RunInfo — one home
+// so GetRun and ListRuns cannot drift apart.
+const runCols = "run_id, command, started_at, finished_at, status, pages_ok, pages_err, prompt_tokens, completion_tokens, usd_estimate, fetch_pages, fetch_bytes, fetch_ms, proxy"
+
 // GetRun reads a run_history status row; unknown ids error loudly.
 func (d *DB) GetRun(runID string) (RunInfo, error) {
 	var r RunInfo
 	var finished sql.NullString
-	err := d.db.QueryRow(`SELECT run_id, command, started_at, finished_at, status, pages_ok, pages_err, prompt_tokens, completion_tokens, usd_estimate, fetch_pages, fetch_bytes, fetch_ms, proxy FROM run_history WHERE run_id=?`, runID).Scan(
+	err := d.db.QueryRow(`SELECT `+runCols+` FROM run_history WHERE run_id=?`, runID).Scan(
 		&r.RunID, &r.Command, &r.StartedAt, &finished, &r.Status, &r.PagesOK, &r.PagesErr, &r.PromptTokens, &r.CompletionTokens, &r.USDEstimate,
 		&r.FetchPages, &r.FetchBytes, &r.FetchMs, &r.Proxy)
 	if err == sql.ErrNoRows {
@@ -290,7 +294,7 @@ func (d *DB) GetRun(runID string) (RunInfo, error) {
 // same-second runs still sort deterministically. Feeds the desktop
 // History screen; limit <= 0 means all.
 func (d *DB) ListRuns(limit int) ([]RunInfo, error) {
-	q := `SELECT run_id, command, started_at, finished_at, status, pages_ok, pages_err, prompt_tokens, completion_tokens, usd_estimate, fetch_pages, fetch_bytes, fetch_ms, proxy FROM run_history ORDER BY started_at DESC, rowid DESC`
+	q := `SELECT ` + runCols + ` FROM run_history ORDER BY started_at DESC, rowid DESC`
 	if limit > 0 {
 		q += fmt.Sprintf(" LIMIT %d", limit)
 	}
@@ -362,12 +366,13 @@ func (d *DB) LLMCallCount(runID string) (int, error) {
 // LLMCalls returns llm_calls rows for a run, oldest first (cost/provider assertions).
 // Empty runID returns all rows, mirroring LLMCallCount.
 func (d *DB) LLMCalls(runID string) ([]LLMCall, error) {
-	q := `SELECT provider, model, prompt_tokens, completion_tokens, usd_estimate, purpose FROM llm_calls ORDER BY id`
+	q := `SELECT provider, model, prompt_tokens, completion_tokens, usd_estimate, purpose FROM llm_calls`
 	var args []any
 	if runID != "" {
-		q = `SELECT provider, model, prompt_tokens, completion_tokens, usd_estimate, purpose FROM llm_calls WHERE run_id=? ORDER BY id`
+		q += ` WHERE run_id=?`
 		args = []any{runID}
 	}
+	q += ` ORDER BY id`
 	rows, err := d.db.Query(q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: list llm calls: %w", err)
@@ -639,13 +644,15 @@ type SelectorEntry struct {
 
 // ListSelectors lists cached selector docs, optionally filtered by domain.
 func (d *DB) ListSelectors(domain string) ([]SelectorEntry, error) {
-	var rows *sql.Rows
-	var err error
+	q := `SELECT domain, schema_hash, fields_json, samples_used, synthesized_at FROM selector_cache`
+	var args []any
 	if domain == "" {
-		rows, err = d.db.Query(`SELECT domain, schema_hash, fields_json, samples_used, synthesized_at FROM selector_cache ORDER BY domain, schema_hash`)
+		q += ` ORDER BY domain, schema_hash`
 	} else {
-		rows, err = d.db.Query(`SELECT domain, schema_hash, fields_json, samples_used, synthesized_at FROM selector_cache WHERE domain=? ORDER BY schema_hash`, domain)
+		q += ` WHERE domain=? ORDER BY schema_hash`
+		args = []any{domain}
 	}
+	rows, err := d.db.Query(q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: list selectors: %w", err)
 	}

@@ -131,21 +131,20 @@ func (c *crawlContext) cleanPage(ctx context.Context, page core.FetchedPage) (co
 }
 
 // checkCeiling aborts before LLM spend when running+projected > max.
+// Flat-rate providers (codex, opencode-go) are exempt — fixed bill, the
+// --max-cost flag contract scrape.CheckCostCeiling already honors.
 func (c *crawlContext) checkCeiling(promptText string) error {
 	if c.opts.MaxCost <= 0 {
+		return nil
+	}
+	if extract.IsFlatRateProvider(c.opts.Provider) {
 		return nil
 	}
 	running, err := c.db.RunCost(c.runID)
 	if err != nil {
 		return err // fail closed
 	}
-	proj := extract.ProjectedCost(c.opts.Model, promptText)
-	if proj == 0 {
-		if toks := extract.EstimatePromptTokens(promptText); toks > 0 {
-			proj = float64(toks) / 1e6 * 2.00
-		}
-	}
-	if running+proj > c.opts.MaxCost {
+	if running+extract.ProjectedCostWithFallback(c.opts.Model, promptText) > c.opts.MaxCost {
 		return ErrCostCeiling
 	}
 	return nil

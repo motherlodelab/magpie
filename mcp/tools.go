@@ -290,6 +290,29 @@ type ExtractOut struct {
 	Usage     map[string]any `json:"usage,omitempty" jsonschema:"LLM usage"`
 }
 
+// prepContent resolves ExtractIn's content_type contract once: html gets
+// cleaned (markdown + structured-data sidecar), markdown passes through
+// verbatim. The schema path extracts the sidecar; the prompt path ignores
+// it. Errors keep the "mcp: extract_structured:" prefix both callers ship.
+func prepContent(ctx context.Context, in ExtractIn) (string, json.RawMessage, error) {
+	ct := in.ContentType
+	if ct == "" {
+		ct = "html"
+	}
+	switch ct {
+	case "html":
+		cleaned, err := clean.Clean(ctx, clean.RawPage{HTML: []byte(in.Content)})
+		if err != nil {
+			return "", nil, fmt.Errorf("mcp: extract_structured: %w", err)
+		}
+		return cleaned.Markdown, cleaned.StructuredData, nil
+	case "markdown":
+		return in.Content, nil, nil
+	default:
+		return "", nil, fmt.Errorf("mcp: extract_structured: content_type %q must be html|markdown", ct)
+	}
+}
+
 func handleExtract(d Deps) func(context.Context, *sdk.CallToolRequest, ExtractIn) (*sdk.CallToolResult, ExtractOut, error) {
 	return func(ctx context.Context, _ *sdk.CallToolRequest, in ExtractIn) (*sdk.CallToolResult, ExtractOut, error) {
 		if in.Prompt != "" && len(in.Schema) > 0 {
@@ -309,23 +332,9 @@ func handleExtract(d Deps) func(context.Context, *sdk.CallToolRequest, ExtractIn
 		if err != nil {
 			return nil, ExtractOut{}, fmt.Errorf("mcp: extract_structured schema: %w", err)
 		}
-		ct := in.ContentType
-		if ct == "" {
-			ct = "html"
-		}
-		var markdown string
-		var sidecar json.RawMessage
-		switch ct {
-		case "html":
-			cleaned, err := clean.Clean(ctx, clean.RawPage{HTML: []byte(in.Content)})
-			if err != nil {
-				return nil, ExtractOut{}, fmt.Errorf("mcp: extract_structured: %w", err)
-			}
-			markdown, sidecar = cleaned.Markdown, cleaned.StructuredData
-		case "markdown":
-			markdown = in.Content
-		default:
-			return nil, ExtractOut{}, fmt.Errorf("mcp: extract_structured: content_type %q must be html|markdown", ct)
+		markdown, sidecar, err := prepContent(ctx, in)
+		if err != nil {
+			return nil, ExtractOut{}, err
 		}
 
 		runID := store.NewRunID()

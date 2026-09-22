@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -247,6 +246,18 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 			fmt.Fprintf(os.Stderr, "warning: finish run: %v\n", err)
 		}
 	}
+	// One deferred finish owns the run row: return paths below only flip
+	// the counters. (0,1,"error") is the default; success paths set
+	// (1,0,"finished"); missing-key and cost-ceiling aborts zero the error
+	// count (er=0) — config errors, not page errors.
+	ok, er, status := 0, 1, "error"
+	defer func() { finish(ok, er, status) }()
+	verticalDone := func(res Result, verr error) (Result, error) {
+		if verr == nil {
+			ok, er, status = 1, 0, "finished"
+		}
+		return res, verr
+	}
 
 	// Screenshot is a browser-only capability: no static fetch, no clean,
 	// no LLM. Fresh browser per capture — same pattern as fetchBrowser.
@@ -255,10 +266,9 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 	if o.PageFormat == "screenshot" {
 		png, serr := screenshotPage(ctx, rawURL, o)
 		if serr != nil {
-			finish(0, 1, "error")
 			return Result{}, serr
 		}
-		finish(1, 0, "finished")
+		ok, er, status = 1, 0, "finished"
 		return Result{RunID: runID, URL: rawURL, FinalURL: rawURL,
 			Rendered: base64.StdEncoding.EncodeToString(png), ScreenshotPNG: png}, nil
 	}
@@ -267,7 +277,6 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 	if vf == nil {
 		static, serr := fetch.NewStaticFetcher()
 		if serr != nil {
-			finish(0, 1, "error")
 			return Result{}, serr
 		}
 		vf = static
@@ -284,7 +293,6 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 	if explicit != nil {
 		// ^ --list ships in Phase C; the message names it anyway so the string never changes.
 		if u, err := url.Parse(rawURL); err != nil || !explicit.Match(u) {
-			finish(0, 1, "error")
 			return Result{}, fmt.Errorf("scrape: vertical %q: %w for %s", o.Vertical, vertical.ErrURLMismatch, rawURL)
 		}
 		dispatch = explicit
@@ -302,10 +310,9 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 	page, err := fetchURL(ctx, vf, rawURL, render, o)
 	if err != nil {
 		if dispatch == nil {
-			finish(0, 1, "error")
 			return Result{}, err
 		}
-		return runVertical(ctx, vfetch, rawURL, *dispatch, vbase, finish)
+		return verticalDone(runVertical(ctx, vfetch, rawURL, *dispatch, vbase))
 	}
 	// Fetch telemetry rides the run row next to LLM usage; warn-only,
 	// never fails the page. The proxy entry that served (redacted
@@ -326,9 +333,8 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 	})
 	if err != nil || cleaned.Quality != clean.IssueNone {
 		if dispatch != nil {
-			return runVertical(ctx, vfetch, rawURL, *dispatch, vbase, finish)
+			return verticalDone(runVertical(ctx, vfetch, rawURL, *dispatch, vbase))
 		}
-		finish(0, 1, "error")
 		if err != nil {
 			return Result{}, err
 		}
@@ -343,19 +349,18 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 	} else {
 		rendered, rerr := clean.Render(cleaned, o.PageFormat)
 		if rerr != nil {
-			finish(0, 1, "error")
 			return Result{}, rerr
 		}
 		base.Rendered = rendered
 	}
 
 	if dispatch != nil {
-		return runVertical(ctx, vfetch, rawURL, *dispatch, base, finish)
+		return verticalDone(runVertical(ctx, vfetch, rawURL, *dispatch, base))
 	}
 
 	// No schema → markdown only, no LLM.
 	if o.Schema == nil {
-		finish(1, 0, "finished")
+		ok, er, status = 1, 0, "finished"
 		return base, nil
 	}
 
@@ -366,20 +371,19 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 		key = d.APIKeyFor(provider)
 	}
 	if key == "" && extract.NeedsAPIKey(provider) {
-		finish(0, 0, "error")
+		er = 0 // nothing was attempted — config error, not a page error
 		return Result{}, fmt.Errorf("scrape: provider %s: %w", provider, ErrMissingKey)
 	}
 	ex, err := d.ExtractorFor(provider, key, model, o.Schema, runID)
 	if err != nil {
-		finish(0, 1, "error")
 		return Result{}, err
 	}
 
 	// Selector cache: hit + all required fields non-null → 0 LLM calls.
 	if o.UseCache {
-		if doc, ok, gerr := d.DB.GetSelectors(domainOfURL(cleaned.FinalURL), selector.SchemaHash(o.Schema)); gerr == nil && ok {
+		if doc, found, gerr := d.DB.GetSelectors(domainOfURL(cleaned.FinalURL), selector.SchemaHash(o.Schema)); gerr == nil && found {
 			if rec, nulls := selectorApply(doc, o.Schema, page.HTML, cleaned.StructuredData); len(nulls) == 0 {
-				finish(1, 0, "finished")
+				ok, er, status = 1, 0, "finished"
 				base.Record = rec
 				base.FromCache = true
 				return base, nil
@@ -389,7 +393,7 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 
 	promptText := "Extract structured data.\n" + string(cleaned.StructuredData) + "\n" + cleaned.Markdown
 	if err := CheckCostCeiling(d.DB, runID, provider, model, promptText, o.MaxCost); err != nil {
-		finish(0, 0, "error")
+		er = 0 // abort before any spend — not a page error
 		return Result{}, fmt.Errorf("scrape: %w", err)
 	}
 
@@ -397,72 +401,13 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 		Markdown: cleaned.Markdown, StructuredData: cleaned.StructuredData, Schema: o.Schema,
 	})
 	if err != nil {
-		finish(0, 1, "error")
 		return Result{}, err
 	}
-	finish(1, 0, "finished")
+	ok, er, status = 1, 0, "finished"
 	base.Record = res.Record
 	base.Usage = res.Usage
 	base.Provider = res.Provider
 	base.Model = res.Model
-	return base, nil
-}
-
-// verticalFetcher wraps the static fetcher with the main path's G.2
-// semantics for extractors' own fetches: a typed challenge gets exactly
-// one rod escalation (a real browser often clears it; honor o.CDP). The
-// typed error stays primary when the browser can't clear it — launch
-// noise never masks the vendor. Actions/CaptureXHR are stripped: they were
-// authored for the main page, not the extractor's sub-fetch URLs. Zero-value
-// browser is fetchBrowser; tests inject a fake via the browser field.
-type verticalFetcher struct {
-	static  vertical.Fetcher
-	o       Options
-	browser func(ctx context.Context, rawURL string, o Options) (*fetch.FetchResponse, error)
-}
-
-func (f verticalFetcher) Fetch(ctx context.Context, req fetch.FetchRequest) (*fetch.FetchResponse, error) {
-	// Extractors build their own FetchRequest and can't see run options —
-	// the per-run egress rides every sub-fetch (main page already got it
-	// via fetchURL).
-	req.Proxy = f.o.Proxy
-	resp, err := f.static.Fetch(ctx, req)
-	if err == nil {
-		return resp, nil
-	}
-	var ce *fetch.ChallengeError
-	if !errors.As(err, &ce) {
-		return nil, err
-	}
-	browser := f.browser
-	if browser == nil {
-		browser = fetchBrowser
-	}
-	if bresp, berr := browser(ctx, req.URL, Options{CDP: f.o.CDP, Lang: f.o.Lang, Proxy: f.o.Proxy}); berr == nil {
-		return bresp, nil
-	}
-	return nil, err
-}
-
-// runVertical runs one zero-LLM extractor over a challenge-escalating
-// fetcher (profiles exist for challenge-prone HTML pages, not registry
-// APIs). No selector cache interaction (vertical output isn't
-// selector-derived; caching it would poison schema-keyed lookups), no
-// LLM. Extractor errors are hard errors — never a silent LLM fallback.
-func runVertical(ctx context.Context, vf vertical.Fetcher, rawURL string, ex vertical.Extractor, base Result, finish func(ok, er int, status string)) (Result, error) {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		finish(0, 1, "error")
-		return Result{}, fmt.Errorf("scrape: vertical %s: %w", ex.Info.Name, err)
-	}
-	m, err := ex.Extract(ctx, vf, u)
-	if err != nil {
-		finish(0, 1, "error")
-		return Result{}, err
-	}
-	finish(1, 0, "finished")
-	base.Record = m
-	base.Vertical = ex.Info.Name
 	return base, nil
 }
 
@@ -511,74 +456,6 @@ func fetchURL(ctx context.Context, vf vertical.Fetcher, rawURL, render string, o
 	return fetchBrowser(ctx, rawURL, o)
 }
 
-// parseViewport parses the WxH screenshot viewport shape (0,0 = default).
-func parseViewport(v string) (int, int, error) {
-	if v == "" {
-		return 0, 0, nil
-	}
-	w, h, ok := strings.Cut(v, "x")
-	if !ok {
-		return 0, 0, fmt.Errorf("want WxH")
-	}
-	pw, err1 := strconv.Atoi(w)
-	ph, err2 := strconv.Atoi(h)
-	if err1 != nil || err2 != nil {
-		return 0, 0, fmt.Errorf("want WxH")
-	}
-	return pw, ph, nil
-}
-
-// screenshotPage captures a full-page PNG through a fresh browser;
-// with actions the capture joins the action session as its final step.
-func screenshotPage(ctx context.Context, rawURL string, o Options) ([]byte, error) {
-	w, h, err := parseViewport(o.Viewport)
-	if err != nil {
-		return nil, &OptionsError{fmt.Sprintf("scrape: viewport %q must be WxH (e.g. 1280x800)", o.Viewport)}
-	}
-	acts, err := fetch.ParseActions(o.Actions)
-	if err != nil {
-		return nil, err
-	}
-	rod := fetch.NewRodFetcher()
-	rod.CDP, rod.Proxy = o.CDP, o.Proxy
-	defer func() { _ = rod.Close() }() //nolint:errcheck // browser teardown; failure unactionable
-	if len(acts) == 0 {
-		return rod.Screenshot(ctx, rawURL, w, h)
-	}
-	return rod.ScreenshotActions(ctx, rawURL, w, h, acts)
-}
-
-func fetchBrowserChecked(ctx context.Context, rawURL string, o Options) (*fetch.FetchResponse, error) {
-	resp, err := fetchBrowser(ctx, rawURL, o)
-	if err != nil {
-		return nil, err
-	}
-	// A challenge that survives the browser is still a challenge: type it
-	// instead of shipping the interstitial DOM to cleaning (which reads it
-	// as an empty page and reports the misleading "quality blocked (empty)").
-	vendor := fetch.DetectChallenge(resp.HTML, resp.Headers, resp.StatusCode)
-	if vendor == "" {
-		vendor = fetch.DetectChallengeRendered(resp.HTML)
-	}
-	if vendor != "" {
-		return nil, &fetch.ChallengeError{Vendor: vendor, StatusCode: resp.StatusCode, URL: rawURL}
-	}
-	return resp, nil
-}
-
-func fetchBrowser(ctx context.Context, rawURL string, o Options) (*fetch.FetchResponse, error) {
-	// ValidateOptions pre-flighted the lines for Run; direct callers get
-	// the typed line error here.
-	acts, err := fetch.ParseActions(o.Actions)
-	if err != nil {
-		return nil, err
-	}
-	rod := fetch.NewRodFetcher()
-	rod.CDP, rod.Proxy = o.CDP, o.Proxy
-	defer func() { _ = rod.Close() }() //nolint:errcheck // browser teardown; failure unactionable
-	return rod.FetchWithActions(ctx, fetch.FetchRequest{URL: rawURL, Lang: o.Lang, CaptureXHR: o.CaptureXHR}, acts)
-}
-
 func domainOfURL(rawURL string) string {
 	u, err := url.Parse(rawURL)
 	if err != nil || u.Host == "" {
@@ -610,12 +487,7 @@ func CheckCostCeiling(db *store.DB, runID, provider, model, promptText string, m
 	if err != nil {
 		return err
 	}
-	proj := extract.ProjectedCost(model, promptText)
-	if proj == 0 {
-		if toks := extract.EstimatePromptTokens(promptText); toks > 0 {
-			proj = float64(toks) / 1e6 * 2.00
-		}
-	}
+	proj := extract.ProjectedCostWithFallback(model, promptText)
 	if running+proj > maxCost {
 		return fmt.Errorf("running %.6f + projected %.6f > max %.6f: %w", running, proj, maxCost, crawl.ErrCostCeiling)
 	}

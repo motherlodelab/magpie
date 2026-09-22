@@ -105,6 +105,50 @@ func (b *BrowserGate) Release() {
 	}
 }
 
+// stage runs one pipeline stage: `workers` bounded goroutines consume in,
+// run fn, and forward to out. The stage goroutine closes out when its
+// workers finish, so closing the previous stage's output drains in order.
+// A non-nil fn error cancels the stage via its errgroup. Run wires three
+// of these with different types — the shape is the product, the types vary.
+func stage[TIn, TOut any](
+	g *errgroup.Group,
+	gctx context.Context,
+	workers int,
+	in <-chan TIn,
+	out chan TOut,
+	fn func(context.Context, TIn) (TOut, error),
+) {
+	g.Go(func() error {
+		defer close(out)
+		wg, wctx := errgroup.WithContext(gctx)
+		wg.SetLimit(workers)
+	loop:
+		for {
+			select {
+			case <-wctx.Done():
+				break loop
+			case v, ok := <-in:
+				if !ok {
+					break loop
+				}
+				wg.Go(func() error {
+					res, err := fn(wctx, v)
+					if err != nil {
+						return err
+					}
+					select {
+					case out <- res:
+						return nil
+					case <-wctx.Done():
+						return wctx.Err()
+					}
+				})
+			}
+		}
+		return wg.Wait()
+	})
+}
+
 // Run wires source→fetch→clean→extract→sink over bounded channels
 // (1000/100/100). Each stage closes its output when its workers finish, so
 // closing source drains the whole pipeline in order. A non-nil error return
@@ -126,95 +170,9 @@ func Run(
 	cleanOut := make(chan Cleaned, 100)
 	extractOut := make(chan PageResult, 100)
 
-	g.Go(func() error {
-		defer close(fetchOut)
-		wg, wctx := errgroup.WithContext(gctx)
-		wg.SetLimit(cfg.FetchWorkers)
-	loop:
-		for {
-			select {
-			case <-wctx.Done():
-				break loop
-			case task, ok := <-source:
-				if !ok {
-					break loop
-				}
-				wg.Go(func() error {
-					res, err := fetchFn(wctx, task)
-					if err != nil {
-						return err
-					}
-					select {
-					case fetchOut <- res:
-						return nil
-					case <-wctx.Done():
-						return wctx.Err()
-					}
-				})
-			}
-		}
-		return wg.Wait()
-	})
-
-	g.Go(func() error {
-		defer close(cleanOut)
-		wg, wctx := errgroup.WithContext(gctx)
-		wg.SetLimit(cfg.CleanWorkers)
-	loop:
-		for {
-			select {
-			case <-wctx.Done():
-				break loop
-			case page, ok := <-fetchOut:
-				if !ok {
-					break loop
-				}
-				wg.Go(func() error {
-					res, err := cleanFn(wctx, page)
-					if err != nil {
-						return err
-					}
-					select {
-					case cleanOut <- res:
-						return nil
-					case <-wctx.Done():
-						return wctx.Err()
-					}
-				})
-			}
-		}
-		return wg.Wait()
-	})
-
-	g.Go(func() error {
-		defer close(extractOut)
-		wg, wctx := errgroup.WithContext(gctx)
-		wg.SetLimit(cfg.ExtractWorkers)
-	loop:
-		for {
-			select {
-			case <-wctx.Done():
-				break loop
-			case cl, ok := <-cleanOut:
-				if !ok {
-					break loop
-				}
-				wg.Go(func() error {
-					res, err := extractFn(wctx, cl)
-					if err != nil {
-						return err
-					}
-					select {
-					case extractOut <- res:
-						return nil
-					case <-wctx.Done():
-						return wctx.Err()
-					}
-				})
-			}
-		}
-		return wg.Wait()
-	})
+	stage(g, gctx, cfg.FetchWorkers, source, fetchOut, fetchFn)
+	stage(g, gctx, cfg.CleanWorkers, fetchOut, cleanOut, cleanFn)
+	stage(g, gctx, cfg.ExtractWorkers, cleanOut, extractOut, extractFn)
 
 	g.Go(func() error {
 		for r := range extractOut {
