@@ -99,3 +99,45 @@ func TestRod_LangExtraHeader(t *testing.T) {
 		t.Errorf("Accept-Language = %q, want fr-CA,fr;q=0.9 through the browser", seenLang)
 	}
 }
+
+// TestRod_RunHeadersReachBrowserPath: FetchRequest.Headers ride the
+// BROWSER document request too (M0c) — the origin echoes every received
+// header into the body, so one response proves the UA, the probe header,
+// AND the lang pair all arrived (a second SetExtraHeaders call would
+// have clobbered the lang — the merge is load-bearing).
+func TestRod_RunHeadersReachBrowserPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		var b strings.Builder
+		b.WriteString("<html><body>")
+		b.WriteString("<p>ua=" + r.Header.Get("User-Agent") + "</p>")
+		b.WriteString("<p>probe=" + r.Header.Get("X-Probe") + "</p>")
+		b.WriteString("<p>lang=" + r.Header.Get("Accept-Language") + "</p>")
+		b.WriteString("<p>body text padding so the page is not empty.</p>")
+		b.WriteString("</body></html>")
+		_, _ = w.Write([]byte(b.String())) //nolint:errcheck // httptest local
+	}))
+	t.Cleanup(srv.Close)
+
+	r := fetch.NewRodFetcher()
+	defer r.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	res, err := r.FetchWithActions(ctx, fetch.FetchRequest{
+		URL:     srv.URL,
+		Lang:    "de-DE,de;q=0.9",
+		Headers: []string{"User-Agent: m0c-test/1", "X-Probe: 1"},
+	}, nil)
+	if err != nil {
+		if strings.Contains(err.Error(), "launch browser") || strings.Contains(err.Error(), "connect browser") {
+			t.Skipf("no browser available: %v", err)
+		}
+		t.Fatalf("FetchWithActions: %v", err)
+	}
+	body := string(res.HTML)
+	for _, want := range []string{"m0c-test/1", "probe=1", "de-DE"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("origin did not see %q; body: %s", want, body)
+		}
+	}
+}
