@@ -78,5 +78,13 @@ func fetchBrowser(ctx context.Context, rawURL string, o Options) (*fetch.FetchRe
 	rod := fetch.NewRodFetcher()
 	rod.CDP, rod.Proxy = o.CDP, o.Proxy
 	defer func() { _ = rod.Close() }() //nolint:errcheck // browser teardown; failure unactionable
-	return rod.FetchWithActions(ctx, fetch.FetchRequest{URL: rawURL, Lang: o.Lang, CaptureXHR: o.CaptureXHR}, acts)
+	// The browser path rides the SAME request fields as the static path
+	// (scrape.go's one full FetchRequest): Headers (UA override via
+	// openPage) and Cookies ride every fetcher path — escalation, actions,
+	// render=browser. Dropping them here logged the browser out and
+	// re-emulated the device UA on every escalated/actions fetch.
+	return rod.FetchWithActions(ctx, fetch.FetchRequest{
+		URL: rawURL, Lang: o.Lang, CaptureXHR: o.CaptureXHR,
+		Headers: o.Headers, Cookies: o.Cookies,
+	}, acts)
 }

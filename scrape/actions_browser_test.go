@@ -79,3 +79,39 @@ func TestScrape_ActionsLoadMore(t *testing.T) {
 		t.Errorf("static markdown lost the server-rendered rows:\n%s", res2.Markdown)
 	}
 }
+
+// TestScrape_BrowserPathCarriesHeadersAndCookies (M0c2): fetchBrowser
+// used to rebuild a partial FetchRequest (URL/Lang/CaptureXHR only),
+// silently dropping Headers and Cookies on every browser fetch — the
+// actions/escalation path re-emulated the device UA and started logged
+// out while the static path carried both. The echo origin proves both
+// fields reach the browser request through the exported scrape.Run seam.
+func TestScrape_BrowserPathCarriesHeadersAndCookies(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(fmt.Sprintf(`<!doctype html><html><head><title>echo</title></head><body>
+<p id="ua">UA: %s</p><p id="sid">SID: %s</p>
+<p>%s</p></body></html>`, r.UserAgent(), r.URL.Query().Get("sid"), strings.Repeat("padding prose for the quality gate ", 20)))) //nolint:errcheck // httptest local
+	}))
+	t.Cleanup(srv.Close)
+
+	deps := scrape.Deps{DB: openScrapeDB(t)}
+	res, err := scrape.Run(context.Background(), deps, srv.URL+"/echo?sid=jar-sid-42", scrape.Options{
+		Render:  "auto",
+		Headers: []string{"User-Agent: m0c2-test/1", "X-Probe: yes"},
+		Cookies: "sid=jar-sid-42",
+		Actions: []string{"wait 1"}, // actions force the fetchBrowser path
+	})
+	if err != nil {
+		if strings.Contains(err.Error(), "launch browser") || strings.Contains(err.Error(), "connect browser") {
+			t.Skipf("no browser available: %v", err)
+		}
+		t.Fatalf("scrape.Run: %v", err)
+	}
+	if !strings.Contains(res.Markdown, "m0c2-test/1") {
+		t.Errorf("browser path dropped the User-Agent header: %s", res.Markdown[:min(len(res.Markdown), 300)])
+	}
+	if !strings.Contains(res.Markdown, "jar-sid-42") {
+		t.Errorf("browser path dropped the cookie jar: %s", res.Markdown[:min(len(res.Markdown), 300)])
+	}
+}
