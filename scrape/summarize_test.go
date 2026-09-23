@@ -105,6 +105,45 @@ func countTerminators(s string) int {
 	return n
 }
 
+// TestSummarizeText_NeverFetches pins the M0d contract: SummarizeText
+// consumes caller markdown and must never touch Deps.Fetcher — the nil
+// fetcher makes any fetch attempt panic, so passing IS the proof. It
+// also owns its run row (command "summarize") and leaves URL/Title zero
+// (identity is the caller's, from the page it already holds).
+func TestSummarizeText_NeverFetches(t *testing.T) {
+	fx := &fakePrompterExtractor{t: t, promptScript: []string{rambleScript()}}
+	deps := scrape.Deps{
+		DB: openScrapeDB(t),
+		// Fetcher deliberately nil: a fetch path execution panics.
+		ExtractorFor: func(_, _, _ string, _ *extract.Schema, _ string) (extract.Extractor, error) {
+			return fx, nil
+		},
+		APIKeyFor: func(string) string { return "test-key" },
+	}
+	res, err := scrape.SummarizeText(context.Background(), deps, "already-fetched page markdown", scrape.SummarizeOptions{
+		MaxSentences: 3, Provider: "fake", Model: "fake",
+	})
+	if err != nil {
+		t.Fatalf("SummarizeText: %v", err)
+	}
+	if n := countTerminators(res.Summary); n > 3 {
+		t.Errorf("summary has %d terminators, want ≤3", n)
+	}
+	if res.URL != "" || res.FinalURL != "" || res.Title != "" {
+		t.Errorf("identity = %q/%q/%q, want zero (the caller fills it)", res.URL, res.FinalURL, res.Title)
+	}
+	if got := fx.lastUser(); got != "already-fetched page markdown" {
+		t.Errorf("prompt user = %q, want the caller markdown verbatim", got)
+	}
+	runs, err := deps.DB.ListRuns(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].Command != "summarize" {
+		t.Fatalf("run rows = %+v, want exactly one summarize row", runs)
+	}
+}
+
 func TestSummarize_TruncatesRamble(t *testing.T) {
 	fx := &fakePrompterExtractor{t: t, promptScript: []string{rambleScript()}}
 	db := openScrapeDB(t)
