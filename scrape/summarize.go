@@ -40,6 +40,24 @@ type SummaryOut struct {
 // The prompt fan-out (explicit fail-fast, auto fallback) lives in Prompt;
 // Summarize owns the scrape, the run, and the truncation.
 func Summarize(ctx context.Context, d Deps, rawURL string, o SummarizeOptions) (SummaryOut, error) {
+	res, err := Run(ctx, d, rawURL, Options{})
+	if err != nil {
+		return SummaryOut{}, err
+	}
+	out, err := SummarizeText(ctx, d, res.Markdown, o)
+	if err != nil {
+		return SummaryOut{}, err
+	}
+	out.URL, out.FinalURL, out.Title = res.URL, res.FinalURL, res.Title
+	return out, nil
+}
+
+// SummarizeText is Summarize minus the fetch: it condenses caller-supplied
+// markdown to at most N sentences and owns its own run row (command
+// "summarize"). It never fetches — Summarize is Run + SummarizeText plus
+// the page-identity fill. Callers that already hold the page (the desktop
+// workspace) pass the markdown straight in and keep their URL/Title.
+func SummarizeText(ctx context.Context, d Deps, markdown string, o SummarizeOptions) (SummaryOut, error) {
 	n := o.MaxSentences
 	if n <= 0 {
 		n = 3
@@ -47,11 +65,7 @@ func Summarize(ctx context.Context, d Deps, rawURL string, o SummarizeOptions) (
 	if n > 20 {
 		n = 20
 	}
-	res, err := Run(ctx, d, rawURL, Options{})
-	if err != nil {
-		return SummaryOut{}, err
-	}
-	input := capWords(res.Markdown, MaxSummarizeInputWords)
+	input := capWords(markdown, MaxSummarizeInputWords)
 	system := fmt.Sprintf("Summarize the page in at most %d sentences. Reply with plain text only, no JSON, no markdown formatting.", n)
 
 	runID := store.NewRunID()
@@ -73,7 +87,6 @@ func Summarize(ctx context.Context, d Deps, rawURL string, o SummarizeOptions) (
 	}
 	finish(1, "finished")
 	return SummaryOut{
-		URL: res.URL, FinalURL: res.FinalURL, Title: res.Title,
 		Summary: truncateSentences(pr.Text, n), Provider: pr.Provider, Model: o.Model,
 		Usage: pr.Usage,
 	}, nil
