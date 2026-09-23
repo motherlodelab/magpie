@@ -205,10 +205,46 @@ func (r *RodFetcher) openPage(cctx context.Context, req FetchRequest, caps *xhrC
 	if err != nil {
 		return nil, fmt.Errorf("fetch: open page: %w", err)
 	}
-	if req.Lang != "" {
-		if _, err := page.SetExtraHeaders([]string{"Accept-Language", req.Lang}); err != nil {
+	// Request-header plumbing splits on what Chromium actually honors:
+	// User-Agent and Accept-Language are browser-controlled (rod emulates
+	// a default device at page creation; setExtraHTTPHeaders ignores the
+	// emulated pair), so a user-set UA rides ONE
+	// Network.setUserAgentOverride — the same command rod's device
+	// emulation uses — before navigation. Every other header rides ONE
+	// merged SetExtraHeaders call: rod's setter maps to a single CDP
+	// Network.setExtraHTTPHeaders, so a second call would clobber the
+	// first. Colonless lines are skipped, the same documented skip the
+	// static path applies to this field (fetcher.go) — one behavior per
+	// struct field; ValidateOptions stays the loud boundary on the
+	// scrape path.
+	var uaOverride string
+	others := make([]string, 0, 2*len(req.Headers))
+	for _, h := range req.Headers {
+		name, val, ok := strings.Cut(h, ":")
+		if !ok {
+			continue
+		}
+		name, val = strings.TrimSpace(name), strings.TrimSpace(val)
+		if strings.EqualFold(name, "user-agent") {
+			uaOverride = val
+			continue
+		}
+		others = append(others, name, val)
+	}
+	if uaOverride != "" {
+		if err := page.SetUserAgent(&proto.NetworkSetUserAgentOverride{UserAgent: uaOverride, AcceptLanguage: req.Lang}); err != nil {
 			_ = page.Close() //nolint:errcheck // error path; teardown failure unactionable
-			return nil, fmt.Errorf("fetch: set lang header: %w", err)
+			return nil, fmt.Errorf("fetch: set user agent: %w", err)
+		}
+	} else if req.Lang != "" {
+		// No UA override: the emulated pair stays and lang rides extra
+		// headers (the M0b path — proven to beat the emulated AL).
+		others = append(others, "Accept-Language", req.Lang)
+	}
+	if len(others) > 0 {
+		if _, err := page.SetExtraHeaders(others); err != nil {
+			_ = page.Close() //nolint:errcheck // error path; teardown failure unactionable
+			return nil, fmt.Errorf("fetch: set extra headers: %w", err)
 		}
 	}
 	if params := cookieParams(req.URL, req.Cookies); len(params) > 0 {
