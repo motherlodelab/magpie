@@ -12,7 +12,7 @@ func init() {
 		Info: Info{
 			Name:  "github_repo",
 			Label: "GitHub",
-			Desc:  "Repo, issue, PR, or release via the api.github.com REST API (no key needed).",
+			Desc:  "Repo, issue, PR, or release via the api.github.com REST API (no key needed; MAGPIE_GITHUB_TOKEN raises the 60→5000 req/h limit).",
 			Patterns: []string{
 				"https://github.com/{owner}/{repo}",
 				"https://github.com/{owner}/{repo}/issues/{n}",
@@ -51,7 +51,7 @@ func extractGithub(ctx context.Context, f Fetcher, u *url.URL) (map[string]any, 
 	base := "https://api.github.com/repos/" + owner + "/" + repo
 	canon := "https://github.com/" + owner + "/" + repo
 	if len(segs) == 2 {
-		m, err := fetchJSON(ctx, f, base)
+		m, err := fetchJSON(ctx, f, base, githubAuthHeaders()...)
 		if err != nil {
 			return nil, err
 		}
@@ -79,7 +79,7 @@ func extractGithub(ctx context.Context, f Fetcher, u *url.URL) (map[string]any, 
 		if segs[2] == "pull" {
 			api = base + "/pulls/" + n
 		}
-		m, err := fetchJSON(ctx, f, api)
+		m, err := fetchJSON(ctx, f, api, githubAuthHeaders()...)
 		if err != nil {
 			return nil, err
 		}
@@ -99,13 +99,13 @@ func extractGithub(ctx context.Context, f Fetcher, u *url.URL) (map[string]any, 
 	case "releases":
 		if len(segs) >= 5 && segs[3] == "tag" {
 			tag := segs[4]
-			m, err := fetchJSON(ctx, f, base+"/releases/tags/"+tag)
+			m, err := fetchJSON(ctx, f, base+"/releases/tags/"+tag, githubAuthHeaders()...)
 			if err != nil {
 				return nil, err
 			}
 			return releaseMap(m, canon+"/releases/tag/"+tag), nil
 		}
-		body, err := fetchBytes(ctx, f, base+"/releases")
+		body, err := fetchBytes(ctx, f, base+"/releases", githubAuthHeaders()...)
 		if err != nil {
 			return nil, err
 		}
