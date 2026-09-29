@@ -111,27 +111,12 @@ func MatchURL(rawURL string) (Extractor, bool) {
 // fetchBytes GETs rawURL and returns the body; non-2xx is a hard error
 // naming the status (never a silent fallback — fail loudly).
 func fetchBytes(ctx context.Context, f Fetcher, rawURL string) ([]byte, error) {
-	resp, err := f.Fetch(ctx, fetch.FetchRequest{URL: rawURL})
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, fmt.Errorf("vertical: GET %s: HTTP %d", rawURL, resp.StatusCode)
-	}
-	return resp.HTML, nil
+	return fetchBytesAuth(ctx, f, rawURL, nil)
 }
 
 // fetchJSON GETs rawURL and unmarshals the body into a generic map.
 func fetchJSON(ctx context.Context, f Fetcher, rawURL string) (map[string]any, error) {
-	body, err := fetchBytes(ctx, f, rawURL)
-	if err != nil {
-		return nil, err
-	}
-	var m map[string]any
-	if err := json.Unmarshal(body, &m); err != nil {
-		return nil, fmt.Errorf("vertical: GET %s: decode: %w", rawURL, err)
-	}
-	return m, nil
+	return fetchJSONAuth(ctx, f, rawURL, nil)
 }
 
 // parseHTML parses fetched bytes for DOM extraction; the error names the

@@ -28,6 +28,7 @@ func newScrapeCmd() *cobra.Command {
 	var captureXHR []string
 	var cdpURL string
 	var headers []string
+	var asProfile string
 	cmd := &cobra.Command{
 		Use:   "scrape <url>",
 		Short: "Fetch → clean → extract a single URL",
@@ -44,6 +45,10 @@ func newScrapeCmd() *cobra.Command {
 				actions = append(actions, lines...)
 			}
 			actions = append(actions, actionLines...)
+			cookies, headers, perr := resolveProfile(asProfile, cookies, headers)
+			if perr != nil {
+				return fail(2, "%v", perr)
+			}
 			return runScrape(cmd.Context(), args[0], scrapeOptions{
 				Schema: schema, Render: render, Provider: provider, Model: model,
 				Out: out, Format: format, NoCache: noCache,
@@ -76,6 +81,7 @@ func newScrapeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&actionsFile, "actions", "", "action file: one action per line, # comments, rest-of-line args need no quoting")
 	cmd.Flags().StringVar(&lang, "lang", "", "Accept-Language header value, e.g. fr-CA,fr;q=0.9 (no control characters)")
 	cmd.Flags().StringSliceVar(&headers, "header", nil, "raw request header, repeatable: \"Name: value\" (no control characters; wins over profile defaults)")
+	cmd.Flags().StringVar(&asProfile, "as", "", "use a saved credential profile (magpie profile save); explicit --cookies/--header win field-by-field")
 	cmd.Flags().StringSliceVar(&captureXHR, "capture-xhr", nil, "Go regexp: capture matching XHR/fetch response bodies (repeatable; browser rendering only)")
 	cmd.Flags().StringVar(&cdpURL, "cdp-url", "", "remote browser CDP endpoint (ws://, wss://, http(s)://); overrides MAGPIE_CDP_URL — never launches a local browser")
 	return cmd

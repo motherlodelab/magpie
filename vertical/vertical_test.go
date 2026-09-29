@@ -21,6 +21,14 @@ type fakeVerticalFetcher struct {
 	mu     sync.Mutex
 	bodies map[string]fakeResp
 	order  []string
+	reqLog []fetch.FetchRequest // full-request snapshots, append order
+}
+
+// reqLog returns copies of every FetchRequest seen, in order.
+func (f *fakeVerticalFetcher) reqLogReqs() []fetch.FetchRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]fetch.FetchRequest(nil), f.reqLog...)
 }
 
 type fakeResp struct {
@@ -33,6 +41,7 @@ func (f *fakeVerticalFetcher) Fetch(_ context.Context, req fetch.FetchRequest) (
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.order = append(f.order, req.URL)
+	f.reqLog = append(f.reqLog, req)
 	// Longest matching substring wins: deterministic when keys overlap
 	// (e.g. "old.reddit.com/r/" vs ".json" on a retry URL). A key with a
 	// trailing "$" anchors to the URL end instead.

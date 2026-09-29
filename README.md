@@ -34,6 +34,7 @@ scoped crawling · zero-LLM verticals · 12-tool MCP server · WASM plugins.
   - [Network & security](#network--security)
   - [TLS impersonation](#tls-impersonation)
   - [Search](#search)
+  - [Vertical credentials](#vertical-credentials)
   - [Bot challenges](#bot-challenges)
 - [MCP server](#mcp-server)
 - [Custom builds & WASM plugins](#custom-builds--wasm-plugins)
@@ -601,6 +602,15 @@ with localhost/LAN endpoints allowed for the provider itself (it is
 operator-configured; `MAGPIE_SEARXNG_URL` on 127.0.0.1 is the canonical
 setup). SERP hit URLs always scrape through the strict pipeline. Missing
 keys exit 7 with the set-key hint.
+
+### Vertical credentials
+
+Two verticals accept optional credentials via env vars (absent vars = tokenless behavior, unchanged):
+
+- **GitHub** — `MAGPIE_GITHUB_TOKEN` (a PAT): adds a bearer header to `api.github.com` calls, raising the rate limit 60 → 5,000 req/h. Create at github.com/settings/tokens.
+- **Reddit** — `MAGPIE_REDDIT_CLIENT_ID`, `MAGPIE_REDDIT_CLIENT_SECRET`, `MAGPIE_REDDIT_UA` (all three required; partial config fails loudly naming the missing vars): app-only OAuth against `oauth.reddit.com` `.json`, the reliable path from datacenter IPs where anonymous requests are blocked. Create an app ("script" type) at reddit.com/prefs/apps; the UA must be namespaced: `<platform>:<app-id>:<version> (by /u/<name>)`.
+
+Any other site whose login reduces to a static session header is covered by saved profiles: `magpie profile save <name> --cookies "a=b" --header "X-Token: …"`, then `magpie scrape <url> --as <name>` (explicit flags win field-by-field; `profile ls` masks secrets; the store is `<config-dir>/profiles.json`, 0600). LinkedIn is not supported and will not be: anonymous pages sit behind a login wall, its self-serve OAuth grants only your own identity, and its API terms forbid storing content.
 
 ### Bot challenges
 

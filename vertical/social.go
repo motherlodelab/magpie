@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 
@@ -17,7 +18,7 @@ func init() {
 		Info: Info{
 			Name:     "reddit",
 			Label:    "Reddit",
-			Desc:     "Post or subreddit via old.reddit server-rendered HTML, with a .json retry for comment permalinks.",
+			Desc:     "Post or subreddit via old.reddit HTML/.json (tokenless), or OAuth app-only .json when MAGPIE_REDDIT_* creds are set.",
 			Patterns: []string{"https://www.reddit.com/r/{sub}/comments/{id}/", "https://www.reddit.com/r/{sub}/"},
 		},
 		Match:   matchReddit,
@@ -53,6 +54,26 @@ func isPermalink(u *url.URL) bool {
 }
 
 func extractReddit(ctx context.Context, f Fetcher, u *url.URL) (map[string]any, error) {
+	// OAuth-first: with all three MAGPIE_REDDIT_* vars set, ride the
+	// app-only token against oauth.reddit.com .json for BOTH permalinks
+	// and listings (anonymous listings are IP-blocked in practice).
+	// Token failures degrade loudly — never a silent fallback to the
+	// anonymous ladder, which would hide a misconfigured env.
+	if os.Getenv("MAGPIE_REDDIT_CLIENT_ID") != "" || os.Getenv("MAGPIE_REDDIT_CLIENT_SECRET") != "" || os.Getenv("MAGPIE_REDDIT_UA") != "" {
+		headers, aerr := redditAuth(ctx)
+		if aerr != nil {
+			return nil, aerr
+		}
+		api := redditOAuthHost + u.RequestURI() + ".json"
+		jbody, jerr := fetchBytesAuth(ctx, f, api, headers)
+		if jerr != nil {
+			return nil, jerr
+		}
+		if isPermalink(u) {
+			return redditThreadFromJSON(jbody, "https://www.reddit.com"+u.RequestURI())
+		}
+		return redditListingFromJSON(jbody, "https://www.reddit.com"+u.RequestURI())
+	}
 	old := "https://old.reddit.com" + u.RequestURI()
 	www := "https://www.reddit.com" + u.RequestURI()
 	if isPermalink(u) {
@@ -76,6 +97,38 @@ func extractReddit(ctx context.Context, f Fetcher, u *url.URL) (map[string]any, 
 		return nil, err
 	}
 	return redditSubredditFromHTML(body, www), nil
+}
+
+// redditListingFromJSON parses the single-listing subreddit .json shape
+// (children = t3 posts + t5 subreddit info) — NOT the permalink
+// two-listing shape redditThreadFromJSON handles. The t5 child carries
+// the subreddit title/description/subscribers; the first t3 title is a
+// fallback so a sidebar-less listing still carries content.
+func redditListingFromJSON(body []byte, url string) (map[string]any, error) {
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		return nil, fmt.Errorf("vertical: reddit .json: %w", err)
+	}
+	kids, _ := child(m, "data")["children"].([]any)
+	rec := map[string]any{"kind": "subreddit", "url": url, "author": "", "comments": float64(0)}
+	for _, kid := range kids {
+		cm, _ := kid.(map[string]any)
+		d := child(cm, "data")
+		switch cm["kind"] {
+		case "t5":
+			rec["title"] = str(d, "title")
+			rec["selftext"] = str(d, "public_description")
+			rec["score"] = num(d, "subscribers")
+		case "t3":
+			if rec["title"] == nil {
+				rec["title"] = str(d, "title")
+			}
+		}
+	}
+	if rec["title"] == nil {
+		return nil, fmt.Errorf("vertical: reddit listing: no t5/t3 children")
+	}
+	return rec, nil
 }
 
 func redditPostFromHTML(body []byte, url string) map[string]any {
