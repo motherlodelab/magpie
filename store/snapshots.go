@@ -56,6 +56,39 @@ func (d *DB) LatestSnapshot(rawURL string) (Snapshot, bool, error) {
 	return s, true, nil
 }
 
+// ListSnapshots returns the newest limit snapshots for rawURL, newest
+// first; empty slice (not nil error) on an unknown URL. limit <= 0
+// clamps to 10.
+func (d *DB) ListSnapshots(rawURL string, limit int) ([]Snapshot, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := d.db.Query(`SELECT url, content_hash, markdown, checked_at, changed
+		FROM snapshots WHERE url_hash=? ORDER BY checked_at DESC LIMIT ?`,
+		sha256Hex(rawURL), limit)
+	if err != nil {
+		return nil, fmt.Errorf("store: list snapshots: %w", err)
+	}
+	defer rows.Close()
+	out := []Snapshot{}
+	for rows.Next() {
+		var s Snapshot
+		var checked string
+		var changed int
+		if err := rows.Scan(&s.URL, &s.ContentHash, &s.Markdown, &checked, &changed); err != nil {
+			return nil, fmt.Errorf("store: list snapshots: %w", err)
+		}
+		t, err := time.Parse(time.RFC3339Nano, checked)
+		if err != nil {
+			return nil, fmt.Errorf("store: list snapshots: parse checked_at: %w", err)
+		}
+		s.CheckedAt = t
+		s.Changed = changed != 0
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 func boolInt(b bool) int {
 	if b {
 		return 1
