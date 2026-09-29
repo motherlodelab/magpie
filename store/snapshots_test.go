@@ -88,3 +88,36 @@ func TestSnapshots_EmptyDB(t *testing.T) {
 		t.Errorf("empty DB = (%+v, %v, %v), want zero/false/nil", got, ok, err)
 	}
 }
+
+func TestSnapshots_List(t *testing.T) {
+	db := openTempDB(t)
+	for i, hash := range []string{"h1", "h2", "h3"} {
+		if err := db.PutSnapshot("https://example.com/p", hash, "md", i > 0); err != nil {
+			t.Fatalf("PutSnapshot %d: %v", i, err)
+		}
+		time.Sleep(10 * time.Millisecond) // distinct checked_at ordering
+	}
+	got, err := db.ListSnapshots("https://example.com/p", 2)
+	if err != nil {
+		t.Fatalf("ListSnapshots: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].ContentHash != "h3" || got[1].ContentHash != "h2" {
+		t.Errorf("order = [%s, %s], want [h3, h2] newest-first", got[0].ContentHash, got[1].ContentHash)
+	}
+	if got[0].CheckedAt.IsZero() {
+		t.Error("CheckedAt zero — RFC3339Nano contract broken")
+	}
+	// limit <= 0 clamps to 10.
+	all, err := db.ListSnapshots("https://example.com/p", 0)
+	if err != nil || len(all) != 3 {
+		t.Errorf("ListSnapshots(limit 0) = %d rows, %v; want 3, nil", len(all), err)
+	}
+	// Unknown URL: empty non-nil slice, nil error.
+	none, err := db.ListSnapshots("https://nothing.example/", 5)
+	if err != nil || none == nil || len(none) != 0 {
+		t.Errorf("unknown URL = %#v, %v; want empty non-nil, nil", none, err)
+	}
+}
