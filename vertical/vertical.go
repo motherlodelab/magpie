@@ -108,17 +108,6 @@ func MatchURL(rawURL string) (Extractor, bool) {
 	return Extractor{}, false
 }
 
-// fetchBytes GETs rawURL and returns the body; non-2xx is a hard error
-// naming the status (never a silent fallback — fail loudly).
-func fetchBytes(ctx context.Context, f Fetcher, rawURL string) ([]byte, error) {
-	return fetchBytesAuth(ctx, f, rawURL, nil)
-}
-
-// fetchJSON GETs rawURL and unmarshals the body into a generic map.
-func fetchJSON(ctx context.Context, f Fetcher, rawURL string) (map[string]any, error) {
-	return fetchJSONAuth(ctx, f, rawURL, nil)
-}
-
 // parseHTML parses fetched bytes for DOM extraction; the error names the
 // vertical so a malformed page fails loudly at the right site (the
 // degrade-to-fallback sites in social/jsonld keep their own inline call —

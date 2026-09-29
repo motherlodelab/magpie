@@ -26,8 +26,11 @@ var (
 	redditOAuthHost = "https://oauth.reddit.com"
 )
 
-// fetchBytesAuth is fetchBytes with raw request headers attached.
-func fetchBytesAuth(ctx context.Context, f Fetcher, rawURL string, headers []string) ([]byte, error) {
+// fetchBytes GETs rawURL and returns the body; non-2xx is a hard error
+// naming the status (never a silent fallback — fail loudly). Optional
+// raw request headers ride the fetch.FetchRequest.Headers seam (caller
+// wins over the default bundle); absent headers = tokenless behavior.
+func fetchBytes(ctx context.Context, f Fetcher, rawURL string, headers ...string) ([]byte, error) {
 	resp, err := f.Fetch(ctx, fetch.FetchRequest{URL: rawURL, Headers: headers})
 	if err != nil {
 		return nil, err
@@ -38,9 +41,9 @@ func fetchBytesAuth(ctx context.Context, f Fetcher, rawURL string, headers []str
 	return resp.HTML, nil
 }
 
-// fetchJSONAuth is fetchJSON with raw request headers attached.
-func fetchJSONAuth(ctx context.Context, f Fetcher, rawURL string, headers []string) (map[string]any, error) {
-	body, err := fetchBytesAuth(ctx, f, rawURL, headers)
+// fetchJSON GETs rawURL and unmarshals the body into a generic map.
+func fetchJSON(ctx context.Context, f Fetcher, rawURL string, headers ...string) (map[string]any, error) {
+	body, err := fetchBytes(ctx, f, rawURL, headers...)
 	if err != nil {
 		return nil, err
 	}
@@ -114,6 +117,15 @@ func redditToken(ctx context.Context, id, secret string) (string, error) {
 		return "", fmt.Errorf("vertical: reddit token: no access_token in response")
 	}
 	return m.AccessToken, nil
+}
+
+// redditConfigured reports whether any MAGPIE_REDDIT_* var is set —
+// "any" so a partial config reaches redditCreds, which fails loudly
+// naming the missing vars.
+func redditConfigured() bool {
+	return os.Getenv("MAGPIE_REDDIT_CLIENT_ID") != "" ||
+		os.Getenv("MAGPIE_REDDIT_CLIENT_SECRET") != "" ||
+		os.Getenv("MAGPIE_REDDIT_UA") != ""
 }
 
 // redditAuth fetches a token and returns the bearer + namespaced UA

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 
@@ -54,25 +53,8 @@ func isPermalink(u *url.URL) bool {
 }
 
 func extractReddit(ctx context.Context, f Fetcher, u *url.URL) (map[string]any, error) {
-	// OAuth-first: with all three MAGPIE_REDDIT_* vars set, ride the
-	// app-only token against oauth.reddit.com .json for BOTH permalinks
-	// and listings (anonymous listings are IP-blocked in practice).
-	// Token failures degrade loudly — never a silent fallback to the
-	// anonymous ladder, which would hide a misconfigured env.
-	if os.Getenv("MAGPIE_REDDIT_CLIENT_ID") != "" || os.Getenv("MAGPIE_REDDIT_CLIENT_SECRET") != "" || os.Getenv("MAGPIE_REDDIT_UA") != "" {
-		headers, aerr := redditAuth(ctx)
-		if aerr != nil {
-			return nil, aerr
-		}
-		api := redditOAuthHost + u.RequestURI() + ".json"
-		jbody, jerr := fetchBytesAuth(ctx, f, api, headers)
-		if jerr != nil {
-			return nil, jerr
-		}
-		if isPermalink(u) {
-			return redditThreadFromJSON(jbody, "https://www.reddit.com"+u.RequestURI())
-		}
-		return redditListingFromJSON(jbody, "https://www.reddit.com"+u.RequestURI())
+	if redditConfigured() {
+		return extractRedditOAuth(ctx, f, u)
 	}
 	old := "https://old.reddit.com" + u.RequestURI()
 	www := "https://www.reddit.com" + u.RequestURI()
@@ -97,6 +79,27 @@ func extractReddit(ctx context.Context, f Fetcher, u *url.URL) (map[string]any, 
 		return nil, err
 	}
 	return redditSubredditFromHTML(body, www), nil
+}
+
+// extractRedditOAuth is the OAuth-first path: with MAGPIE_REDDIT_* creds
+// set, ride the app-only token against oauth.reddit.com .json for BOTH
+// permalinks and listings (anonymous listings are IP-blocked in
+// practice). Token failures degrade loudly — never a silent fallback to
+// the anonymous ladder, which would hide a misconfigured env.
+func extractRedditOAuth(ctx context.Context, f Fetcher, u *url.URL) (map[string]any, error) {
+	headers, err := redditAuth(ctx)
+	if err != nil {
+		return nil, err
+	}
+	jbody, err := fetchBytes(ctx, f, redditOAuthHost+u.RequestURI()+".json", headers...)
+	if err != nil {
+		return nil, err
+	}
+	www := "https://www.reddit.com" + u.RequestURI()
+	if isPermalink(u) {
+		return redditThreadFromJSON(jbody, www)
+	}
+	return redditListingFromJSON(jbody, www)
 }
 
 // redditListingFromJSON parses the single-listing subreddit .json shape

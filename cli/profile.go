@@ -54,13 +54,8 @@ func saveProfiles(m map[string]Profile) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("profiles: mkdir: %w", err)
 	}
-	if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
-		// 0600 on create — the file holds credentials; never widen later.
-		if err := os.WriteFile(path, data, 0o600); err != nil {
-			return fmt.Errorf("profiles: write: %w", err)
-		}
-		return nil
-	}
+	// 0600 on create — the file holds credentials. WriteFile never
+	// widens an existing file's perms, so "never widen later" holds.
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("profiles: write: %w", err)
 	}

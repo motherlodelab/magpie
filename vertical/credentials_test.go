@@ -23,7 +23,7 @@ const (
 // default header bundle lives in fetch/, not here).
 func TestFetchJSONAuth_ForwardsHeaders(t *testing.T) {
 	fx := &fakeAuthFetcher{body: []byte(`{"ok":true}`)}
-	if _, err := fetchJSONAuth(context.Background(), fx, "https://api.example.com/x", []string{"Authorization: Bearer z"}); err != nil {
+	if _, err := fetchJSON(context.Background(), fx, "https://api.example.com/x", "Authorization: Bearer z"); err != nil {
 		t.Fatal(err)
 	}
 	req := fx.lastReq()
@@ -42,7 +42,7 @@ func TestFetchJSONAuth_ForwardsHeaders(t *testing.T) {
 
 func TestFetchBytesAuth_Non2xxIsHardError(t *testing.T) {
 	fx := &fakeAuthFetcher{status: 403, body: []byte("nope")}
-	if _, err := fetchBytesAuth(context.Background(), fx, "https://api.example.com/x", nil); err == nil || !strings.Contains(err.Error(), "403") {
+	if _, err := fetchBytes(context.Background(), fx, "https://api.example.com/x"); err == nil || !strings.Contains(err.Error(), "403") {
 		t.Errorf("err = %v, want HTTP 403 named", err)
 	}
 }
