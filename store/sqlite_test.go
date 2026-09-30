@@ -486,3 +486,57 @@ func TestListRuns(t *testing.T) {
 		t.Errorf("limited = %v, want [run-c run-b]", limited)
 	}
 }
+
+func TestSelectorDomains(t *testing.T) {
+	db := openTempDB(t)
+
+	// Empty cache → nil slice, nil error.
+	if rows, err := db.SelectorDomains(); err != nil || rows != nil {
+		t.Fatalf("empty = %v, %v; want nil, nil", rows, err)
+	}
+
+	// Two schemas on one domain: selectors count sums across docs,
+	// schemas counts distinct hashes, samples takes the max.
+	if err := db.PutSelectors("ex.com", "h1", `{"fields":{"price":{},"title":{}}}`, 3); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.PutSelectors("ex.com", "h2", `{"fields":{"rating":{}}}`, 7); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.PutSelectors("other.com", "h1", `{"fields":{"name":{}}}`, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := db.SelectorDomains()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2 (%+v)", len(rows), rows)
+	}
+	if rows[0].Domain != "ex.com" || rows[1].Domain != "other.com" {
+		t.Errorf("domains = [%s %s], want sorted", rows[0].Domain, rows[1].Domain)
+	}
+	ex := rows[0]
+	if ex.Schemas != 2 || ex.Selectors != 3 || ex.SamplesUsed != 7 {
+		t.Errorf("ex.com = %+v, want 2 schemas, 3 selectors, 7 samples", ex)
+	}
+	if ex.LastSynthesized == "" {
+		t.Error("ex.com: empty last synthesized")
+	}
+	if rows[1].Schemas != 1 || rows[1].Selectors != 1 || rows[1].SamplesUsed != 1 {
+		t.Errorf("other.com = %+v, want 1/1/1", rows[1])
+	}
+
+	// Domain-wide delete drops the whole row set (heal's contract).
+	if _, err := db.DeleteSelectors("ex.com", ""); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = db.SelectorDomains()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Domain != "other.com" {
+		t.Errorf("after delete = %+v, want only other.com", rows)
+	}
+}

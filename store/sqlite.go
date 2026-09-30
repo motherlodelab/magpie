@@ -671,6 +671,45 @@ func (d *DB) ListSelectors(domain string) ([]SelectorEntry, error) {
 	return out, nil
 }
 
+// SelectorDomainRow aggregates one domain's selector_cache rows
+// (cache-inspect helper).
+type SelectorDomainRow struct {
+	Domain          string
+	Schemas         int    // distinct schema_hash count
+	Selectors       int    // total selector keys across the domain's fields_json docs
+	SamplesUsed     int    // max samples_used
+	LastSynthesized string // max synthesized_at, RFC3339
+}
+
+// SelectorDomains reports one row per cached domain, ordered by domain.
+// An empty cache returns a nil slice with a nil error.
+func (d *DB) SelectorDomains() ([]SelectorDomainRow, error) {
+	rows, err := d.db.Query(`
+SELECT domain, COUNT(DISTINCT schema_hash), SUM(nkeys), MAX(samples_used), MAX(synthesized_at)
+FROM (
+  SELECT domain, schema_hash, samples_used, synthesized_at,
+         (SELECT COUNT(*) FROM json_each(fields_json, '$.fields')) AS nkeys
+  FROM selector_cache
+)
+GROUP BY domain ORDER BY domain`)
+	if err != nil {
+		return nil, fmt.Errorf("store: selector domains: %w", err)
+	}
+	defer func() { _ = rows.Close() }() //nolint:errcheck // drain-only close
+	var out []SelectorDomainRow
+	for rows.Next() {
+		var r SelectorDomainRow
+		if err := rows.Scan(&r.Domain, &r.Schemas, &r.Selectors, &r.SamplesUsed, &r.LastSynthesized); err != nil {
+			return nil, fmt.Errorf("store: selector domains: %w", err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: selector domains: %w", err)
+	}
+	return out, nil
+}
+
 // allowlisted tables for the TableCount test helper.
 var tables = map[string]bool{
 	"selector_cache": true,
