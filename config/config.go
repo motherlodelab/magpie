@@ -149,6 +149,10 @@ func Save(path string, mutate func(*Config) error) error {
 	}
 	setMappingKey(root, "extract_provider", cfg.ExtractProvider)
 	setMappingKey(root, "model", cfg.Model)
+	// exporter_cmd is GUI-settable too (desktop Integrations): always kept
+	// accurate — writing an explicit empty clears a stale value instead of
+	// silently resurrecting it on the next save.
+	setMappingKey(root, "exporter_cmd", cfg.ExporterCmd)
 	out, err := yaml.Marshal(doc)
 	if err != nil {
 		return fmt.Errorf("config: encode %s: %w", path, err)
