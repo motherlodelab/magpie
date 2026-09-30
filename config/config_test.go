@@ -316,3 +316,38 @@ func TestConfigShow_HasPhase3Keys(t *testing.T) {
 		}
 	}
 }
+
+// TestSaveExporterCmd: exporter_cmd round-trips like the other GUI-set
+// keys — set persists, and an explicit empty clears a stale value (the
+// desktop's Integrations field writes both).
+func TestSaveExporterCmd(t *testing.T) {
+	dir := isolatedXDG(t)
+	path := writeInitial(t, dir, "# hand-tuned\nextract_provider: openai\nexporter_cmd: old-pipe\n")
+
+	if err := config.Save(path, func(c *config.Config) error {
+		c.ExporterCmd = "jq -c ."
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s := mustRead(t, path)
+	for _, want := range []string{"# hand-tuned", "exporter_cmd: jq -c ."} {
+		if !strings.Contains(s, want) {
+			t.Errorf("set: file missing %q\nfile:\n%s", want, s)
+		}
+	}
+	cfg, err := config.Load(path)
+	if err != nil || cfg.ExporterCmd != "jq -c ." {
+		t.Fatalf("Load round-trip = %q, %v; want jq -c .", cfg.ExporterCmd, err)
+	}
+
+	if err := config.Save(path, func(c *config.Config) error {
+		c.ExporterCmd = "" // explicit clear — the mutate sees the file's current value
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err := config.Load(path); err != nil || cfg.ExporterCmd != "" {
+		t.Errorf("clear: Load = %q, %v; want empty", cfg.ExporterCmd, err)
+	}
+}

@@ -69,7 +69,7 @@ func (d *DB) ListSnapshots(rawURL string, limit int) ([]Snapshot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: list snapshots: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }() //nolint:errcheck // read-only; close error unactionable
 	out := []Snapshot{}
 	for rows.Next() {
 		var s Snapshot
