@@ -347,7 +347,7 @@ func TestSaveExporterCmd(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if cfg, _ := config.Load(path); cfg.ExporterCmd != "" {
-		t.Errorf("clear left %q", cfg.ExporterCmd)
+	if cfg, err := config.Load(path); err != nil || cfg.ExporterCmd != "" {
+		t.Errorf("clear: Load = %q, %v; want empty", cfg.ExporterCmd, err)
 	}
 }
