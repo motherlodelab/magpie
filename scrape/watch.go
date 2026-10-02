@@ -9,8 +9,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
+	"strings"
 	"time"
 
+	"github.com/motherlodelab/magpie/clean"
 	"github.com/motherlodelab/magpie/fetch"
 )
 
@@ -24,6 +27,18 @@ type WatchResult struct {
 	Diff          string
 	WebhookStatus string
 	CheckedAt     time.Time
+	// WordsDelta is the new snapshot's word count minus the old one's
+	// (strings.Fields, as DiffWords counts) — net, so a same-length rewrite
+	// reads 0. LinksAdded/LinksRemoved are link targets (clean.MarkdownLinks)
+	// present only in the new / only in the old snapshot, sorted. All zero
+	// on the baseline and on an unchanged check.
+	// ponytail: net, not gross — gross added/removed words would need
+	// DiffWords to return its op counts; the upgrade path is a
+	// DiffWordsStats beside it. Net is always computable, even when
+	// DiffWords refuses a large window.
+	WordsDelta   int
+	LinksAdded   []string
+	LinksRemoved []string
 }
 
 // CheckForChange runs one zero-LLM check: scrape the URL markdown-only,
@@ -57,6 +72,8 @@ func CheckForChange(ctx context.Context, d Deps, rawURL string, o Options) (Watc
 				return WatchResult{}, derr
 			}
 			out.Diff = diff
+			out.WordsDelta = len(strings.Fields(res.Markdown)) - len(strings.Fields(prev.Markdown))
+			out.LinksAdded, out.LinksRemoved = linkDelta(clean.MarkdownLinks(prev.Markdown), clean.MarkdownLinks(res.Markdown))
 		}
 	}
 	if err := d.DB.PutSnapshot(rawURL, newHash, res.Markdown, out.Changed); err != nil {
@@ -66,6 +83,29 @@ func CheckForChange(ctx context.Context, d Deps, rawURL string, o Options) (Watc
 		out.WebhookStatus = postWebhook(ctx, rawURL, o.Webhook, out)
 	}
 	return out, nil
+}
+
+// linkDelta returns targets only in cur (added) and only in prev (removed),
+// sorted. Inputs are already deduped by MarkdownLinks.
+func linkDelta(prev, cur []string) (added, removed []string) {
+	p, c := make(map[string]bool, len(prev)), make(map[string]bool, len(cur))
+	for _, u := range prev {
+		p[u] = true
+	}
+	for _, u := range cur {
+		c[u] = true
+		if !p[u] {
+			added = append(added, u)
+		}
+	}
+	for _, u := range prev {
+		if !c[u] {
+			removed = append(removed, u)
+		}
+	}
+	slices.Sort(added)
+	slices.Sort(removed)
+	return added, removed
 }
 
 func sha256Hex(s string) string {

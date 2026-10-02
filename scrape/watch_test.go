@@ -306,3 +306,56 @@ func TestWatch_WebhookScope(t *testing.T) {
 		}
 	})
 }
+
+// TestWatch_ChangeMetrics pins the per-change metrics (desktop D10): zero
+// on the baseline and on an unchanged re-check; on a change, the net word
+// delta and the link targets gained/lost — sorted, so two of each are
+// inserted out of order.
+func TestWatch_ChangeMetrics(t *testing.T) {
+	db := openScrapeDB(t)
+	linkPage := func(extra string, links ...string) string {
+		var a strings.Builder
+		for _, l := range links {
+			a.WriteString(` <a href="` + l + `">link</a>`)
+		}
+		return "<html><head><title>Metrics Watch</title></head><body><p>The price is ten dollars today." + extra + " " +
+			strings.Repeat("Honest filler prose keeps the gate satisfied. ", 8) + a.String() + "</p></body></html>"
+	}
+	wf := &watchFetcher{body: linkPage("", "/keep", "/old", "/b-old")}
+	deps := scrape.Deps{DB: db, Fetcher: wf}
+	url := "https://shop.example.com/p/1"
+	check := func() scrape.WatchResult {
+		t.Helper()
+		res, err := scrape.CheckForChange(context.Background(), deps, url, scrape.Options{Render: "static"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	zero := func(stage string, r scrape.WatchResult) {
+		t.Helper()
+		if r.WordsDelta != 0 || len(r.LinksAdded) != 0 || len(r.LinksRemoved) != 0 {
+			t.Errorf("%s metrics = %d %q %q, want all zero", stage, r.WordsDelta, r.LinksAdded, r.LinksRemoved)
+		}
+	}
+
+	zero("baseline", check())
+
+	wf.set(linkPage(" Three more words.", "/keep", "/new", "/a-new"))
+	res := check()
+	if !res.Changed {
+		t.Fatalf("change not reported: %+v", res)
+	}
+	if res.WordsDelta != 3 {
+		t.Errorf("WordsDelta = %d, want 3", res.WordsDelta)
+	}
+	const base = "https://shop.example.com"
+	if got, want := strings.Join(res.LinksAdded, " "), base+"/a-new "+base+"/new"; got != want {
+		t.Errorf("LinksAdded = %q, want %q (sorted)", got, want)
+	}
+	if got, want := strings.Join(res.LinksRemoved, " "), base+"/b-old "+base+"/old"; got != want {
+		t.Errorf("LinksRemoved = %q, want %q (sorted)", got, want)
+	}
+
+	zero("unchanged re-check", check())
+}

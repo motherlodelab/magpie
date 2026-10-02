@@ -101,6 +101,14 @@ func extractLinks(md string) (anchors, images []llmLink) {
 	return anchors, images
 }
 
+// MarkdownLinks returns the anchor targets in md — images and #fragments
+// excluded, deduped, in document order: the same extractLinks walk every
+// other link consumer shares.
+func MarkdownLinks(md string) []string {
+	anchors, _ := extractLinks(md)
+	return linkURLs(anchors)
+}
+
 func linkURLs(ls []llmLink) []string {
 	out := make([]string, 0, len(ls))
 	for _, l := range ls {

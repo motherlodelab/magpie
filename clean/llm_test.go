@@ -71,6 +71,19 @@ func TestLLMText_LinksPreserved(t *testing.T) {
 	}
 }
 
+// TestMarkdownLinks pins the exported link walk the watch metrics use:
+// anchors only (images and #fragments skipped), deduped, document order.
+func TestMarkdownLinks(t *testing.T) {
+	md := "[a](https://x/1) ![i](https://x/img.png) [b](#top) [c](https://x/1) [d](https://x/2)"
+	got := clean.MarkdownLinks(md)
+	if want := []string{"https://x/1", "https://x/2"}; strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("MarkdownLinks = %q, want %q", got, want)
+	}
+	if got := clean.MarkdownLinks(""); len(got) != 0 {
+		t.Errorf("MarkdownLinks(\"\") = %q, want empty", got)
+	}
+}
+
 func TestLLMText_StructuredGate(t *testing.T) {
 	big := strings.Repeat("x", 600)
 	side := `{"@type":"Article","name":"T","articleBody":"` + big + `","nested":{"@type":"WebPage","url":"https://example.com/"},"site":{"@type":"WebSite","name":"Example"}}`
