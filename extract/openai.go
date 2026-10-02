@@ -70,6 +70,47 @@ func (o *OpenAIAdapter) PromptText(ctx context.Context, system, user string) (st
 	return o.promptOnce(ctx, system, user, nil)
 }
 
+// strictOK reports whether OpenAI's strict structured outputs accept doc:
+// every object schema closes with "additionalProperties": false and lists
+// each of its properties in "required". Any other schema (a hand-written
+// one with optional fields, an edited draft) is sent non-strict, so the
+// model treats it as guidance and the validator + repair loop enforce it,
+// instead of every call failing with HTTP 400 "additionalProperties is
+// required to be supplied and to be false". A false negative only costs
+// strictness, never a call.
+func strictOK(v any) bool {
+	switch t := v.(type) {
+	case map[string]any:
+		props, hasProps := t["properties"].(map[string]any)
+		if hasProps || t["type"] == "object" {
+			if t["additionalProperties"] != false {
+				return false
+			}
+			req, _ := t["required"].([]any)
+			if len(req) != len(props) {
+				return false
+			}
+			for _, r := range req {
+				if k, ok := r.(string); !ok || props[k] == nil {
+					return false
+				}
+			}
+		}
+		for _, c := range t {
+			if !strictOK(c) {
+				return false
+			}
+		}
+	case []any:
+		for _, c := range t {
+			if !strictOK(c) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func (o *OpenAIAdapter) promptOnce(ctx context.Context, system, user string, doc any) (string, TokenUsage, error) {
 	body := map[string]any{
 		"model": o.Model,
@@ -83,7 +124,7 @@ func (o *OpenAIAdapter) promptOnce(ctx context.Context, system, user string, doc
 			"type": "json_schema",
 			"json_schema": map[string]any{
 				"name":   "magpie",
-				"strict": true,
+				"strict": strictOK(doc),
 				"schema": doc,
 			},
 		}
