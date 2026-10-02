@@ -19,8 +19,8 @@ var AutoProviderOrder = []string{
 
 // PromptOptions configures one schema-less prompt call. Provider "auto"
 // tries AutoProviderOrder; Purpose is the llm_calls attribution
-// ("summarize" | "extract") — the adapter itself never logs, the caller
-// owns attribution (see extract.Prompter).
+// ("summarize" | "schema" | "repair" | "extract") — the adapter itself
+// never logs, the caller owns attribution (see extract.Prompter).
 type PromptOptions struct {
 	Provider string
 	Model    string
@@ -97,6 +97,10 @@ func Prompt(ctx context.Context, d Deps, runID string, o PromptOptions) (PromptR
 			}
 			continue
 		}
+		// Same cost policy as the extract path (provider-reported cost wins,
+		// flat-rate stays 0, else the price table): PromptText only fills USD
+		// from usage.cost, so OpenAI/Anthropic logged $0 here before.
+		usage.USDEstimate = extract.CostFor(p, o.Model, usage)
 		if lerr := d.DB.LogLLMCall(runID, store.LLMCall{
 			Provider: p, Model: o.Model,
 			PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens,

@@ -32,10 +32,10 @@ func EstimateCost(model string, prompt, completion int) float64 {
 	return 0
 }
 
-// costFor resolves one call's USD: provider-reported cost (OpenRouter
+// CostFor resolves one call's USD: provider-reported cost (OpenRouter
 // usage.cost) wins; flat-rate providers stay 0 quietly (fixed bill, noise
 // is not signal); otherwise the price table, warning when unknown.
-func costFor(provider, model string, u TokenUsage) float64 {
+func CostFor(provider, model string, u TokenUsage) float64 {
 	if u.USDEstimate != 0 {
 		return u.USDEstimate
 	}
