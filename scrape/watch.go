@@ -34,8 +34,7 @@ type WatchResult struct {
 	// on the baseline and on an unchanged check.
 	// ponytail: net, not gross — gross added/removed words would need
 	// DiffWords to return its op counts; the upgrade path is a
-	// DiffWordsStats beside it. Net is always computable, even when
-	// DiffWords refuses a large window.
+	// DiffWordsStats beside it.
 	WordsDelta   int
 	LinksAdded   []string
 	LinksRemoved []string

@@ -313,13 +313,12 @@ func TestWatch_WebhookScope(t *testing.T) {
 // inserted out of order.
 func TestWatch_ChangeMetrics(t *testing.T) {
 	db := openScrapeDB(t)
-	linkPage := func(extra string, links ...string) string {
+	linkPage := func(extra string, links ...string) string { // pricePage owns the gate padding
 		var a strings.Builder
 		for _, l := range links {
 			a.WriteString(` <a href="` + l + `">link</a>`)
 		}
-		return "<html><head><title>Metrics Watch</title></head><body><p>The price is ten dollars today." + extra + " " +
-			strings.Repeat("Honest filler prose keeps the gate satisfied. ", 8) + a.String() + "</p></body></html>"
+		return pricePage("10" + extra + a.String())
 	}
 	wf := &watchFetcher{body: linkPage("", "/keep", "/old", "/b-old")}
 	deps := scrape.Deps{DB: db, Fetcher: wf}
