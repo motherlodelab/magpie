@@ -57,9 +57,9 @@ func runRepairLoop(ctx context.Context, call providerCall, log func(purpose stri
 			}
 			return ExtractResult{}, fmt.Errorf("extract: provider: %w", err)
 		}
-		// Cost policy lives in costFor (cost.go): provider-reported cost wins,
+		// Cost policy lives in CostFor (cost.go): provider-reported cost wins,
 		// flat-rate stays 0 quietly, otherwise the price table.
-		u.USDEstimate = costFor(provider, model, u)
+		u.USDEstimate = CostFor(provider, model, u)
 		total.PromptTokens += u.PromptTokens
 		total.CompletionTokens += u.CompletionTokens
 		total.USDEstimate += u.USDEstimate

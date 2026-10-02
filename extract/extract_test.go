@@ -820,3 +820,31 @@ func TestAdapterEndpointJoin(t *testing.T) {
 		})
 	}
 }
+
+// TestOpenAIStrictOnlyWhenAccepted: strict structured outputs reject any
+// object schema without "additionalProperties": false or with a property
+// left out of "required" (HTTP 400 on every call), so the adapter sends
+// strict only for schemas OpenAI accepts and everything else non-strict.
+func TestOpenAIStrictOnlyWhenAccepted(t *testing.T) {
+	for _, c := range []struct {
+		name, schema string
+		strict       bool
+	}{
+		{"closed and fully required", `{"type":"object","additionalProperties":false,"required":["a","b"],"properties":{"a":{"type":"string"},"b":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["c"],"properties":{"c":{"type":"number"}}}}}}`, true},
+		{"open root", `{"type":"object","required":["a"],"properties":{"a":{"type":"string"}}}`, false},
+		{"optional field", `{"type":"object","additionalProperties":false,"required":["a"],"properties":{"a":{"type":"string"},"b":{"type":"string"}}}`, false},
+		{"open nested item", `{"type":"object","additionalProperties":false,"required":["b"],"properties":{"b":{"type":"array","items":{"type":"object","properties":{"c":{"type":"number"}}}}}}`, false},
+	} {
+		srv, fp := newFakeProvider(t, openAIEnvelope(`{"a":"x","b":[]}`))
+		sch, err := extract.ParseSchema([]byte(c.schema))
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		_, _ = extract.NewOpenAI(srv.URL, "test-key", "gpt-4o-mini", sch).Extract(t.Context(), extract.ExtractInput{Markdown: "page"}) //nolint:errcheck // only the request body matters here
+		rf, _ := fp.lastBody(t)["response_format"].(map[string]any)
+		js, _ := rf["json_schema"].(map[string]any)
+		if got := js["strict"]; got != c.strict {
+			t.Errorf("%s: strict = %v, want %v", c.name, got, c.strict)
+		}
+	}
+}
