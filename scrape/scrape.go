@@ -241,6 +241,19 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 	if err := d.DB.BeginRun(runID, "scrape"); err != nil {
 		return Result{}, err
 	}
+	// The row exists from here on: every failure carries its id, so the
+	// caller can annotate the "error" row (desktop D8 records why it
+	// failed). Stamped once here, so a new error return in run can't
+	// forget it.
+	res, err := run(ctx, d, rawURL, o, explicit, runID)
+	if err != nil {
+		res.RunID = runID
+	}
+	return res, err
+}
+
+// run is Run after BeginRun: it owns the run row's finish.
+func run(ctx context.Context, d Deps, rawURL string, o Options, explicit *vertical.Extractor, runID string) (Result, error) {
 	finish := func(ok, er int, status string) {
 		if err := d.DB.FinishRun(runID, ok, er, status); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: finish run: %v\n", err)

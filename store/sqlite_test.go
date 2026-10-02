@@ -540,3 +540,112 @@ func TestSelectorDomains(t *testing.T) {
 		t.Errorf("after delete = %+v, want only other.com", rows)
 	}
 }
+
+// --- Desktop D8 additions: error_kind / error_msg + SetRunError. ---
+
+func TestSetRunError_RoundTrip(t *testing.T) {
+	db := openTempDB(t)
+	if err := db.BeginRun("r1", "scrape"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.FinishRun("r1", 0, 1, "error"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetRunError("r1", "timeout", "first"); err != nil {
+		t.Fatalf("SetRunError: %v", err)
+	}
+	// Re-set overwrites (plain UPDATE, idempotent).
+	if err := db.SetRunError("r1", "challenge", "blocked by cloudflare"); err != nil {
+		t.Fatalf("SetRunError again: %v", err)
+	}
+	info, err := db.GetRun("r1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.ErrorKind != "challenge" || info.ErrorMsg != "blocked by cloudflare" {
+		t.Errorf("got kind %q msg %q, want challenge / blocked by cloudflare", info.ErrorKind, info.ErrorMsg)
+	}
+	if info.Status != "error" || info.PagesErr != 1 {
+		t.Errorf("SetRunError touched the finish fields: %+v", info)
+	}
+}
+
+func TestSetRunError_Truncates(t *testing.T) {
+	db := openTempDB(t)
+	if err := db.BeginRun("r1", "scrape"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetRunError("r1", "other", strings.Repeat("x", 1500)); err != nil {
+		t.Fatal(err)
+	}
+	info, err := db.GetRun("r1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(info.ErrorMsg) != 1000 {
+		t.Errorf("stored msg len = %d, want exactly 1000", len(info.ErrorMsg))
+	}
+	// The cap counts runes: a multi-byte message is never cut mid-rune.
+	if err := db.SetRunError("r1", "other", strings.Repeat("é", 1500)); err != nil {
+		t.Fatal(err)
+	}
+	if info, err = db.GetRun("r1"); err != nil {
+		t.Fatal(err)
+	}
+	if n := len([]rune(info.ErrorMsg)); n != 1000 || !strings.HasSuffix(info.ErrorMsg, "é") {
+		t.Errorf("stored %d runes (suffix ok=%v), want 1000 whole runes", n, strings.HasSuffix(info.ErrorMsg, "é"))
+	}
+}
+
+func TestSetRunError_UnknownRun(t *testing.T) {
+	db := openTempDB(t)
+	err := db.SetRunError("run-nope-xyz", "other", "x")
+	if err == nil {
+		t.Fatal("SetRunError(unknown) = nil, want loud error")
+	}
+	if !strings.Contains(err.Error(), "run-nope-xyz") {
+		t.Errorf("error %q does not contain the run id", err)
+	}
+}
+
+// TestRunColsScan_ErrorFields: GetRun and ListRuns read through the one
+// runCols constant, so both see the new fields — on a pre-D file too
+// (the errorColumns migration ran on open), while untouched rows stay empty.
+func TestRunColsScan_ErrorFields(t *testing.T) {
+	db, err := store.Open(openPreDDB(t))
+	if err != nil {
+		t.Fatalf("Open(pre-D db): %v", err)
+	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close: %v", err)
+		}
+	})
+	if err := db.BeginRun("failed", "crawl"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetRunError("failed", "robots", "robots.txt disallows"); err != nil {
+		t.Fatal(err)
+	}
+	info, err := db.GetRun("failed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.ErrorKind != "robots" || info.ErrorMsg != "robots.txt disallows" {
+		t.Errorf("GetRun = kind %q msg %q", info.ErrorKind, info.ErrorMsg)
+	}
+	runs, err := db.ListRuns(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]store.RunInfo{}
+	for _, r := range runs {
+		got[r.RunID] = r
+	}
+	if r := got["failed"]; r.ErrorKind != "robots" || r.ErrorMsg != "robots.txt disallows" {
+		t.Errorf("ListRuns failed row = kind %q msg %q", r.ErrorKind, r.ErrorMsg)
+	}
+	if r := got["pre-d-run"]; r.ErrorKind != "" || r.ErrorMsg != "" {
+		t.Errorf("migrated pre-D row = kind %q msg %q, want ''", r.ErrorKind, r.ErrorMsg)
+	}
+}
