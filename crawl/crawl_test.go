@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/motherlodelab/magpie/clean"
 	"github.com/motherlodelab/magpie/core"
 	"github.com/motherlodelab/magpie/extract"
 	"github.com/motherlodelab/magpie/fetch"
@@ -705,6 +706,7 @@ func TestHooks_NilSafe(t *testing.T) {
 		if hooks {
 			opts.Progress = func(int) {}
 			opts.OnRecord = func(map[string]any) {}
+			opts.PageDone = func(string, int, error) {}
 		}
 		res, err := Run(context.Background(), opts)
 		if err != nil {
@@ -716,6 +718,94 @@ func TestHooks_NilSafe(t *testing.T) {
 	withoutHooks := run(t, false)
 	if withHooks.PagesOK != withoutHooks.PagesOK || withHooks.PagesErr != withoutHooks.PagesErr {
 		t.Errorf("hooked %+v != nil-hook %+v (hooks must not change results)", withHooks, withoutHooks)
+	}
+}
+
+// TestHooks_PageDone pins the PageDone contract end to end. The collector is
+// DELIBERATELY unlocked: PageDone is documented "serially, never
+// concurrently" (sink goroutine), so under `go test -race` a concurrent call
+// is a detected data race — the race detector is the assertion. The
+// recordsSeen leg pins "after that page's OnRecord": a per-event records
+// counter only includes the page if OnRecord fired first.
+func TestHooks_PageDone(t *testing.T) {
+	pages := map[string]string{
+		"/0": itemPage("/1", "/2", "/missing"),
+		"/1": itemPage(),
+		"/2": itemPage(),
+		// "/missing" is unserved → http.NotFound → thin 404 → qualityErr
+		// (fetchPage routes non-2xx through Clean+Classify first) → QualityError.
+	}
+	o := newSiteOrigin(t, pages, "")
+	db := openCrawlDB(t)
+	fx := &fakeExtractor{script: map[string]map[string]any{"default": crawlTruth}}
+
+	type pageCall struct {
+		path        string
+		depth       int
+		err         error
+		recordsSeen int
+	}
+	var records int      // OnRecord count — same goroutine as PageDone, no lock (pinned)
+	var calls []pageCall // a SLICE: len + path set catches doubles; a keyed map would hide them
+	res, err := Run(context.Background(), Options{
+		SeedURL: o.srv.URL + "/0", Schema: mustTestSchema(t),
+		MaxPages: 10, MaxDepth: 10, SameHost: true,
+		FetchWorkers: 4, Rate: 1000, Format: "jsonl", Out: filepath.Join(t.TempDir(), "r.jsonl"),
+		DB: db, Extractor: fx,
+		OnRecord: func(map[string]any) { records++ },
+		PageDone: func(u string, depth int, err error) {
+			calls = append(calls, pageCall{strings.TrimPrefix(u, o.srv.URL), depth, err, records})
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// One call per done/errored page: 3 ok + 1 errored. len + the four-path
+	// lookup below together pin "each URL exactly once".
+	if len(calls) != res.PagesOK+res.PagesErr || len(calls) != 4 {
+		t.Fatalf("pageDone calls = %d, want done+errored = %d (= 4)", len(calls), res.PagesOK+res.PagesErr)
+	}
+	byPath := map[string]pageCall{}
+	for _, c := range calls {
+		byPath[c.path] = c
+	}
+	for _, path := range []string{"/0", "/1", "/2", "/missing"} {
+		c, ok := byPath[path]
+		if !ok {
+			t.Fatalf("no PageDone call for %s (got %+v)", path, calls)
+		}
+		wantDepth := 0
+		if path != "/0" {
+			wantDepth = 1
+		}
+		if c.depth != wantDepth {
+			t.Errorf("%s depth = %d, want %d", path, c.depth, wantDepth)
+		}
+		if path == "/missing" {
+			if c.err == nil || !errors.Is(c.err, clean.ErrQuality) {
+				t.Errorf("%s err = %v, want a clean.ErrQuality wrap (thin 404 → quality gate)", path, c.err)
+			}
+			continue
+		}
+		if c.err != nil {
+			t.Errorf("%s err = %v, want nil", path, c.err)
+		}
+	}
+	// Order leg, in sink (= call) order: every call sees records == the ok
+	// pages so far, the current one included — its OnRecord already fired.
+	// A flipped order would show k-1 on the k-th ok page. Per-URL counts are
+	// NOT pinned: links are queued at the clean stage, before the seed's
+	// extract+sink, so even /0 isn't guaranteed to reach the sink first
+	// (a fast-failing /missing often beats it).
+	ok := 0
+	for _, c := range calls {
+		if c.err == nil {
+			ok++
+		}
+		if c.recordsSeen != ok {
+			t.Errorf("%s saw records = %d, want %d (PageDone must fire after that page's OnRecord)", c.path, c.recordsSeen, ok)
+		}
 	}
 }
 

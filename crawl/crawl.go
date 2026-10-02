@@ -81,6 +81,12 @@ type Options struct {
 	// (nil = off). Total is intentionally omitted: the frontier total is
 	// unknowable upfront.
 	Progress func(done int)
+	// PageDone is called once per done/errored page from the sink goroutine
+	// — serially, never concurrently — after that page's OnRecord and before
+	// Progress. url is the frontier URL (pre-redirect); depth its link depth;
+	// err the page's failure (fetch/clean/extract, or the record write), nil
+	// on success. nil = off.
+	PageDone func(url string, depth int, err error)
 	// OnRecord receives each extracted record at the sink (nil = off).
 	// The MCP crawl_site handler captures records through it.
 	OnRecord func(map[string]any)
@@ -329,6 +335,7 @@ func (c *crawlContext) runPipeline(ctx context.Context) (Result, error) {
 		if sinkErr != nil {
 			return
 		}
+		pageErr := r.Err
 		if r.Err != nil {
 			if merr := c.db.MarkError(c.runID, hashTask(r.Task), r.Err.Error()); merr != nil {
 				fmt.Fprintf(os.Stderr, "warning: mark error: %v\n", merr)
@@ -336,6 +343,7 @@ func (c *crawlContext) runPipeline(ctx context.Context) (Result, error) {
 		} else {
 			if werr := w.write(r); werr != nil {
 				sinkErr = werr
+				pageErr = werr
 				cancel()
 				if merr := c.db.MarkError(c.runID, hashTask(r.Task), werr.Error()); merr != nil {
 					fmt.Fprintf(os.Stderr, "warning: mark error: %v\n", merr)
@@ -348,6 +356,9 @@ func (c *crawlContext) runPipeline(ctx context.Context) (Result, error) {
 		}
 		c.outstanding.Add(-1)
 		doneCount++
+		if c.opts.PageDone != nil {
+			c.opts.PageDone(r.Task.URL, r.Task.Depth, pageErr)
+		}
 		if c.opts.Progress != nil {
 			c.opts.Progress(doneCount)
 		}
