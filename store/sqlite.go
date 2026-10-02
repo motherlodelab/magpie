@@ -141,6 +141,14 @@ var fetchColumns = []struct{ name, def string }{
 	{"proxy", "TEXT NOT NULL DEFAULT ''"},
 }
 
+// errorColumns record why a failed run failed (desktop D8's Failures
+// panel): a caller-chosen kind bucket plus the verbatim, capped message.
+// Additive like fetchColumns — older files gain them (empty) on open.
+var errorColumns = []struct{ name, def string }{
+	{"error_kind", "TEXT NOT NULL DEFAULT ''"},
+	{"error_msg", "TEXT NOT NULL DEFAULT ''"},
+}
+
 func (d *DB) migrateRunHistory() error {
 	rows, err := d.db.Query(`PRAGMA table_info(run_history)`)
 	if err != nil {
@@ -164,7 +172,7 @@ func (d *DB) migrateRunHistory() error {
 		return fmt.Errorf("store: migrate run_history: %w", err)
 	}
 	_ = rows.Close() //nolint:errcheck // read-only; close error unactionable
-	for _, col := range fetchColumns {
+	for _, col := range append(fetchColumns, errorColumns...) {
 		if has[col.name] {
 			continue
 		}
@@ -267,11 +275,13 @@ type RunInfo struct {
 	FetchBytes       int64
 	FetchMs          int64
 	Proxy            string
+	ErrorKind        string // "" unless SetRunError ran (failed runs only)
+	ErrorMsg         string
 }
 
 // runCols is the run_history column list scanned into RunInfo — one home
 // so GetRun and ListRuns cannot drift apart.
-const runCols = "run_id, command, started_at, finished_at, status, pages_ok, pages_err, prompt_tokens, completion_tokens, usd_estimate, fetch_pages, fetch_bytes, fetch_ms, proxy"
+const runCols = "run_id, command, started_at, finished_at, status, pages_ok, pages_err, prompt_tokens, completion_tokens, usd_estimate, fetch_pages, fetch_bytes, fetch_ms, proxy, error_kind, error_msg"
 
 // GetRun reads a run_history status row; unknown ids error loudly.
 func (d *DB) GetRun(runID string) (RunInfo, error) {
@@ -279,7 +289,7 @@ func (d *DB) GetRun(runID string) (RunInfo, error) {
 	var finished sql.NullString
 	err := d.db.QueryRow(`SELECT `+runCols+` FROM run_history WHERE run_id=?`, runID).Scan(
 		&r.RunID, &r.Command, &r.StartedAt, &finished, &r.Status, &r.PagesOK, &r.PagesErr, &r.PromptTokens, &r.CompletionTokens, &r.USDEstimate,
-		&r.FetchPages, &r.FetchBytes, &r.FetchMs, &r.Proxy)
+		&r.FetchPages, &r.FetchBytes, &r.FetchMs, &r.Proxy, &r.ErrorKind, &r.ErrorMsg)
 	if err == sql.ErrNoRows {
 		return RunInfo{}, fmt.Errorf("store: unknown run_id %q", runID)
 	}
@@ -309,7 +319,7 @@ func (d *DB) ListRuns(limit int) ([]RunInfo, error) {
 		var r RunInfo
 		var finished sql.NullString
 		if err := rows.Scan(&r.RunID, &r.Command, &r.StartedAt, &finished, &r.Status, &r.PagesOK, &r.PagesErr, &r.PromptTokens, &r.CompletionTokens, &r.USDEstimate,
-			&r.FetchPages, &r.FetchBytes, &r.FetchMs, &r.Proxy); err != nil {
+			&r.FetchPages, &r.FetchBytes, &r.FetchMs, &r.Proxy, &r.ErrorKind, &r.ErrorMsg); err != nil {
 			return nil, fmt.Errorf("store: list runs: %w", err)
 		}
 		r.FinishedAt = finished.String
@@ -335,6 +345,28 @@ func (d *DB) SetRunProxy(runID, proxy string) error {
 	_, err := d.db.Exec(`UPDATE run_history SET proxy=? WHERE run_id=?`, proxy, runID)
 	if err != nil {
 		return fmt.Errorf("store: set run proxy: %w", err)
+	}
+	return nil
+}
+
+// maxErrorMsg caps run_history.error_msg (runes) so an unbounded error
+// string can never bloat the row; the cap lives here so every caller
+// inherits it.
+const maxErrorMsg = 1000
+
+// SetRunError records why a failed run failed. It is additive to
+// FinishRun (whose signature many callers share) and is meant for failed
+// exits only; unknown ids error loudly.
+func (d *DB) SetRunError(runID, kind, msg string) error {
+	if r := []rune(msg); len(r) > maxErrorMsg {
+		msg = string(r[:maxErrorMsg])
+	}
+	res, err := d.db.Exec(`UPDATE run_history SET error_kind=?, error_msg=? WHERE run_id=?`, kind, msg, runID)
+	if err != nil {
+		return fmt.Errorf("store: set run error: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n == 0 {
+		return fmt.Errorf("store: set run error: unknown run_id %q", runID)
 	}
 	return nil
 }

@@ -423,6 +423,38 @@ func TestScrape_ChallengeRawTyped(t *testing.T) {
 	}
 }
 
+// TestRun_ErrorCarriesRunID: a failure after BeginRun returns the run id
+// (the deferred finish wrote an "error" row the caller can annotate);
+// pre-validation failures return no id and leave no row.
+func TestRun_ErrorCarriesRunID(t *testing.T) {
+	url := "https://blocked.example/page"
+	db := openScrapeDB(t)
+	d := fakeDeps(db, &fakeExtractor{}, "")
+	d.Fetcher = &fakeGatedFetcher{errs: map[string]error{url: &fetch.ChallengeError{Vendor: "cloudflare", StatusCode: 403, URL: url}}}
+	res, err := scrape.Run(t.Context(), d, url, scrape.Options{Render: "static"})
+	if err == nil || res.RunID == "" {
+		t.Fatalf("Run = (%q, %v), want a run id with the error", res.RunID, err)
+	}
+	runs, lerr := db.ListRuns(0)
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if len(runs) != 1 || runs[0].RunID != res.RunID || runs[0].Status != "error" {
+		t.Fatalf("runs = %+v, want one error row %s", runs, res.RunID)
+	}
+
+	// Pre-validation: nil DB and bad options error before BeginRun.
+	if res, err := scrape.Run(t.Context(), scrape.Deps{}, url, scrape.Options{}); err == nil || res.RunID != "" {
+		t.Errorf("nil DB = (%q, %v), want error without id", res.RunID, err)
+	}
+	if res, err := scrape.Run(t.Context(), d, url, scrape.Options{Render: "bogus"}); err == nil || res.RunID != "" {
+		t.Errorf("bad options = (%q, %v), want error without id", res.RunID, err)
+	}
+	if runs, _ = db.ListRuns(0); len(runs) != 1 {
+		t.Errorf("rows = %d, want 1 (pre-validation must not begin a run)", len(runs))
+	}
+}
+
 // TestScrape_ChallengeAutoEscalation: render=auto gets one rod attempt;
 // when the browser can't launch in the sandbox the TYPED error stays
 // primary (launch noise must never mask the vendor).

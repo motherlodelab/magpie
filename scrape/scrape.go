@@ -249,14 +249,17 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 	// One deferred finish owns the run row: return paths below only flip
 	// the counters. (0,1,"error") is the default; success paths set
 	// (1,0,"finished"); missing-key and cost-ceiling aborts zero the error
-	// count (er=0) — config errors, not page errors.
+	// count (er=0) — config errors, not page errors. Every error return
+	// from here on carries Result{RunID: runID} so the caller can annotate
+	// the "error" row (desktop D8 records why it failed).
 	ok, er, status := 0, 1, "error"
 	defer func() { finish(ok, er, status) }()
 	verticalDone := func(res Result, verr error) (Result, error) {
-		if verr == nil {
-			ok, er, status = 1, 0, "finished"
+		if verr != nil {
+			return Result{RunID: runID}, verr
 		}
-		return res, verr
+		ok, er, status = 1, 0, "finished"
+		return res, nil
 	}
 
 	// Screenshot is a browser-only capability: no static fetch, no clean,
@@ -266,7 +269,7 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 	if o.PageFormat == "screenshot" {
 		png, serr := screenshotPage(ctx, rawURL, o)
 		if serr != nil {
-			return Result{}, serr
+			return Result{RunID: runID}, serr
 		}
 		ok, er, status = 1, 0, "finished"
 		return Result{RunID: runID, URL: rawURL, FinalURL: rawURL,
@@ -277,7 +280,7 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 	if vf == nil {
 		static, serr := fetch.NewStaticFetcher()
 		if serr != nil {
-			return Result{}, serr
+			return Result{RunID: runID}, serr
 		}
 		vf = static
 	}
@@ -293,7 +296,7 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 	if explicit != nil {
 		// ^ --list ships in Phase C; the message names it anyway so the string never changes.
 		if u, err := url.Parse(rawURL); err != nil || !explicit.Match(u) {
-			return Result{}, fmt.Errorf("scrape: vertical %q: %w for %s", o.Vertical, vertical.ErrURLMismatch, rawURL)
+			return Result{RunID: runID}, fmt.Errorf("scrape: vertical %q: %w for %s", o.Vertical, vertical.ErrURLMismatch, rawURL)
 		}
 		dispatch = explicit
 	} else if o.Vertical == "auto" {
@@ -310,7 +313,7 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 	page, err := fetchURL(ctx, vf, rawURL, render, o)
 	if err != nil {
 		if dispatch == nil {
-			return Result{}, err
+			return Result{RunID: runID}, err
 		}
 		return verticalDone(runVertical(ctx, vfetch, rawURL, *dispatch, vbase))
 	}
@@ -336,9 +339,9 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 			return verticalDone(runVertical(ctx, vfetch, rawURL, *dispatch, vbase))
 		}
 		if err != nil {
-			return Result{}, err
+			return Result{RunID: runID}, err
 		}
-		return Result{}, &clean.QualityError{Issue: cleaned.Quality, URL: rawURL}
+		return Result{RunID: runID}, &clean.QualityError{Issue: cleaned.Quality, URL: rawURL}
 	}
 	base := Result{RunID: runID, URL: page.URL, FinalURL: cleaned.FinalURL, Title: cleaned.Title,
 		Markdown: cleaned.Markdown, StructuredData: cleaned.StructuredData, XHR: page.XHR}
@@ -349,7 +352,7 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 	} else {
 		rendered, rerr := clean.Render(cleaned, o.PageFormat)
 		if rerr != nil {
-			return Result{}, rerr
+			return Result{RunID: runID}, rerr
 		}
 		base.Rendered = rendered
 	}
@@ -372,11 +375,11 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 	}
 	if key == "" && extract.NeedsAPIKey(provider) {
 		er = 0 // nothing was attempted — config error, not a page error
-		return Result{}, fmt.Errorf("scrape: provider %s: %w", provider, ErrMissingKey)
+		return Result{RunID: runID}, fmt.Errorf("scrape: provider %s: %w", provider, ErrMissingKey)
 	}
 	ex, err := d.ExtractorFor(provider, key, model, o.Schema, runID)
 	if err != nil {
-		return Result{}, err
+		return Result{RunID: runID}, err
 	}
 
 	// Selector cache: hit + all required fields non-null → 0 LLM calls.
@@ -394,14 +397,14 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 	promptText := "Extract structured data.\n" + string(cleaned.StructuredData) + "\n" + cleaned.Markdown
 	if err := CheckCostCeiling(d.DB, runID, provider, model, promptText, o.MaxCost); err != nil {
 		er = 0 // abort before any spend — not a page error
-		return Result{}, fmt.Errorf("scrape: %w", err)
+		return Result{RunID: runID}, fmt.Errorf("scrape: %w", err)
 	}
 
 	res, err := ex.Extract(ctx, extract.ExtractInput{
 		Markdown: cleaned.Markdown, StructuredData: cleaned.StructuredData, Schema: o.Schema,
 	})
 	if err != nil {
-		return Result{}, err
+		return Result{RunID: runID}, err
 	}
 	ok, er, status = 1, 0, "finished"
 	base.Record = res.Record
