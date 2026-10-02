@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS llm_calls (
     ts                TEXT NOT NULL,
     FOREIGN KEY(run_id) REFERENCES run_history(run_id)
 );
+CREATE INDEX IF NOT EXISTS idx_llm_calls_ts ON llm_calls(ts);
 
 CREATE TABLE IF NOT EXISTS snapshots (
     url_hash     TEXT NOT NULL,
