@@ -365,7 +365,11 @@ func (d *DB) SetRunError(runID, kind, msg string) error {
 	if err != nil {
 		return fmt.Errorf("store: set run error: %w", err)
 	}
-	if n, err := res.RowsAffected(); err != nil || n == 0 {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("store: set run error: %w", err)
+	}
+	if n == 0 {
 		return fmt.Errorf("store: set run error: unknown run_id %q", runID)
 	}
 	return nil
