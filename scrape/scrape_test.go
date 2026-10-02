@@ -450,8 +450,8 @@ func TestRun_ErrorCarriesRunID(t *testing.T) {
 	if res, err := scrape.Run(t.Context(), d, url, scrape.Options{Render: "bogus"}); err == nil || res.RunID != "" {
 		t.Errorf("bad options = (%q, %v), want error without id", res.RunID, err)
 	}
-	if runs, _ = db.ListRuns(0); len(runs) != 1 {
-		t.Errorf("rows = %d, want 1 (pre-validation must not begin a run)", len(runs))
+	if runs, lerr = db.ListRuns(0); lerr != nil || len(runs) != 1 {
+		t.Errorf("rows = %d (%v), want 1 (pre-validation must not begin a run)", len(runs), lerr)
 	}
 }
 
