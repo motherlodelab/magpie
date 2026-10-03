@@ -237,6 +237,45 @@ func TestRun_PageFormatJSON(t *testing.T) {
 	}
 }
 
+// TestRun_KeepsCleanedPage pins Result.Cleaned: every non-raw format
+// renders byte-identical from it, a raw run keeps it too, and it never
+// reaches the CLI/MCP JSON.
+func TestRun_KeepsCleanedPage(t *testing.T) {
+	fx := &fakeExtractor{script: map[string]any{"title": "Widget"}}
+	db := openScrapeDB(t)
+	origin := scrapeOrigin(t, scrapeHTML)
+	for _, f := range []string{"markdown", "llm", "text", "json", "html"} {
+		res, err := scrape.Run(context.Background(), fakeDeps(db, fx, ""), origin, scrape.Options{Render: "static", PageFormat: f})
+		if err != nil {
+			t.Fatalf("Run %s: %v", f, err)
+		}
+		got, err := clean.Render(res.Cleaned, f)
+		if err != nil {
+			t.Fatalf("Render %s: %v", f, err)
+		}
+		if got != res.Rendered {
+			t.Errorf("%s: clean.Render(res.Cleaned) != res.Rendered", f)
+		}
+	}
+	res, err := scrape.Run(context.Background(), fakeDeps(db, fx, ""), origin, scrape.Options{Render: "static", PageFormat: "raw"})
+	if err != nil {
+		t.Fatalf("Run raw: %v", err)
+	}
+	if res.Cleaned.Markdown == "" || res.Cleaned.Markdown != res.Markdown {
+		t.Errorf("raw run: Cleaned.Markdown = %.40q, want res.Markdown (non-empty)", res.Cleaned.Markdown)
+	}
+	if res.Cleaned.HTML == "" {
+		t.Error("raw run: Cleaned.HTML empty")
+	}
+	b, err := json.Marshal(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "Cleaned") {
+		t.Errorf("Result JSON carries Cleaned: %.80s", b)
+	}
+}
+
 func TestRun_PageFormatBogus(t *testing.T) {
 	fx := &fakeExtractor{script: map[string]any{"title": "Widget"}}
 	db := openScrapeDB(t)

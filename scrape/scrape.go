@@ -112,6 +112,13 @@ type Result struct {
 	// XHR carries captured XHR/fetch bodies (additive-omitempty; nil
 	// unless --capture-xhr matched something).
 	XHR []fetch.XHRCapture `json:",omitempty"`
+	// Cleaned is the page every non-raw format renders from:
+	// clean.Render(res.Cleaned, f) is what Rendered would hold had the run
+	// used PageFormat f, so a caller can show several formats from one
+	// fetch. Zero on screenshot runs and on vertical runs whose main page
+	// didn't clean. Never serialized: Markdown, Title, FinalURL and
+	// StructuredData already carry its public half.
+	Cleaned clean.CleanedPage `json:"-"`
 }
 
 // OptionsError marks a pre-I/O options validation failure (CLI exit 2).
@@ -354,7 +361,7 @@ func run(ctx context.Context, d Deps, rawURL string, o Options, explicit *vertic
 		return Result{}, &clean.QualityError{Issue: cleaned.Quality, URL: rawURL}
 	}
 	base := Result{RunID: runID, URL: page.URL, FinalURL: cleaned.FinalURL, Title: cleaned.Title,
-		Markdown: cleaned.Markdown, StructuredData: cleaned.StructuredData, XHR: page.XHR}
+		Markdown: cleaned.Markdown, StructuredData: cleaned.StructuredData, XHR: page.XHR, Cleaned: cleaned}
 	if o.PageFormat == "raw" {
 		// The decoded response body, untouched (quality gate above still
 		// classified it — challenge raw is a typed error, never bytes).
