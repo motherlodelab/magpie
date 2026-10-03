@@ -235,7 +235,8 @@ magpie watch https://example.com/pricing --every 5m --webhook https://hooks.loca
 
 Every check stores a snapshot in the cache DB; on change the word-diff
 prints (`changed=true old=… new=…`) and `--webhook` receives exactly one
-`POST {url, changed, old_hash, new_hash, diff}`. Silence on no-change,
+`POST {url, changed, old_hash, new_hash, diff}` (unsigned, with `webhook-id`
+— stable per change — and `webhook-timestamp` headers). Silence on no-change,
 exit 0 on change or not. `--once` is the cron/systemd-timer mode.
 
 | Flag | Values / default | Action |
