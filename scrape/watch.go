@@ -1,20 +1,16 @@
 package scrape
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/motherlodelab/magpie/clean"
-	"github.com/motherlodelab/magpie/fetch"
+	"github.com/motherlodelab/magpie/webhook"
 )
 
 // WatchResult is one watch check. WebhookStatus: "" (not fired —
@@ -120,17 +116,12 @@ type webhookPayload struct {
 	Diff    string `json:"diff"`
 }
 
-// postWebhook fires the change notification exactly once and returns the
-// status string. The client is built INLINE with AllowPrivate: the
-// webhook URL is operator-chosen on the command line — the same trust
-// tier as MAGPIE_PROXY_FILE and MAGPIE_SEARXNG_URL (searxng precedent).
-// Never hoist this transport into a shared var: a future caller would
-// inherit the private-net allowance.
+// postWebhook fires the change notification exactly once (cron re-runs
+// are the retry), unsigned, with the v1 payload, through webhook.Send —
+// the one delivery engine core and the desktop share. The message id
+// derives from the new content hash, so a re-post of the same change is
+// recognisably the same message.
 func postWebhook(ctx context.Context, rawURL, webhookURL string, res WatchResult) string {
-	client := &http.Client{
-		Transport: fetch.GuardedTransportWithOptions(fetch.SSRFOptions{AllowPrivate: true}),
-		Timeout:   10 * time.Second,
-	}
 	body, err := json.Marshal(webhookPayload{
 		URL: rawURL, Changed: res.Changed,
 		OldHash: res.OldHash, NewHash: res.NewHash, Diff: res.Diff,
@@ -138,21 +129,9 @@ func postWebhook(ctx context.Context, rawURL, webhookURL string, res WatchResult
 	if err != nil {
 		return "failed: " + err.Error()
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewReader(body))
-	if err != nil {
-		return "failed: " + err.Error()
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return "failed: " + err.Error()
-	}
-	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // drain-close; failure unactionable
-	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
-		return "failed: read response: " + err.Error()
-	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return fmt.Sprintf("failed: HTTP %d", resp.StatusCode)
+	r := webhook.Send(ctx, webhookURL, "", "msg_"+res.NewHash[:24], body, webhook.Options{Tries: 1}) // CLI contract: exactly once, unsigned; cron re-runs are the retry
+	if r.Err != nil {
+		return "failed: " + r.Err.Error()
 	}
 	return "sent"
 }
