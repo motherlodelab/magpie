@@ -212,6 +212,23 @@ func (d *DB) migrateRunHistory() error {
 	return nil
 }
 
+// execOne runs a write that must touch a row; 0 rows is the loud miss
+// (store: <op>: <miss>).
+func (d *DB) execOne(op, miss, q string, args ...any) error {
+	res, err := d.db.Exec(q, args...)
+	if err != nil {
+		return fmt.Errorf("store: %s: %w", op, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("store: %s: %w", op, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("store: %s: %s", op, miss)
+	}
+	return nil
+}
+
 func sha256Hex(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
@@ -390,18 +407,8 @@ func (d *DB) SetRunError(runID, kind, msg string) error {
 	if r := []rune(msg); len(r) > maxErrorMsg {
 		msg = string(r[:maxErrorMsg])
 	}
-	res, err := d.db.Exec(`UPDATE run_history SET error_kind=?, error_msg=? WHERE run_id=?`, kind, msg, runID)
-	if err != nil {
-		return fmt.Errorf("store: set run error: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("store: set run error: %w", err)
-	}
-	if n == 0 {
-		return fmt.Errorf("store: set run error: unknown run_id %q", runID)
-	}
-	return nil
+	return d.execOne("set run error", fmt.Sprintf("unknown run_id %q", runID),
+		`UPDATE run_history SET error_kind=?, error_msg=? WHERE run_id=?`, kind, msg, runID)
 }
 
 // RunCost returns the accumulated usd_estimate for a run.
@@ -619,18 +626,8 @@ func (d *DB) CrawlStats(runID string) (pending, inflight, done, errors int, err 
 
 // ResumeRun flips a finished/interrupted run back to running.
 func (d *DB) ResumeRun(runID string) error {
-	res, err := d.db.Exec(`UPDATE run_history SET status='running', finished_at=NULL WHERE run_id=?`, runID)
-	if err != nil {
-		return fmt.Errorf("store: resume run: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("store: resume run: %w", err)
-	}
-	if n == 0 {
-		return fmt.Errorf("store: resume run: unknown run_id %q", runID)
-	}
-	return nil
+	return d.execOne("resume run", fmt.Sprintf("unknown run_id %q", runID),
+		`UPDATE run_history SET status='running', finished_at=NULL WHERE run_id=?`, runID)
 }
 
 // ResetInflight re-queues stranded inflight rows as pending.

@@ -228,19 +228,3 @@ func (d *DB) SetFactStatus(runID, factID, status, note string) error {
 	return d.execOne("set fact status", fmt.Sprintf("unknown fact %q in run %q", factID, runID),
 		`UPDATE facts SET status=?, note=? WHERE run_id=? AND fact_id=?`, status, note, runID, factID)
 }
-
-// execOne runs an UPDATE that must touch a row; 0 rows is the loud miss.
-func (d *DB) execOne(op, miss, q string, args ...any) error {
-	res, err := d.db.Exec(q, args...)
-	if err != nil {
-		return fmt.Errorf("store: %s: %w", op, err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("store: %s: %w", op, err)
-	}
-	if n == 0 {
-		return fmt.Errorf("store: %s: %s", op, miss)
-	}
-	return nil
-}

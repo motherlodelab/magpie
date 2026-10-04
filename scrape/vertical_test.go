@@ -320,20 +320,27 @@ func TestRun_VerticalExplicitOptIn(t *testing.T) {
 	}
 }
 
+// registerEscalation adds the escalation tests' one extractor. The
+// vertical registry is package-global and append-only, so it registers
+// once per process — a per-test Register fails "already registered" on
+// -count=N reruns.
+var registerEscalation = sync.OnceValue(func() error {
+	return vertical.Register(vertical.Extractor{
+		Info:  vertical.Info{Name: "escalationtest", Label: "Escalation test", Desc: "test-only"},
+		Match: func(u *url.URL) bool { return u.Host == "escalation.test" },
+		Extract: func(_ context.Context, _ vertical.Fetcher, _ *url.URL) (map[string]any, error) {
+			return map[string]any{"title": "Widget"}, nil
+		},
+	})
+})
+
 // TestRun_VerticalSurvivesBlockedPage: the main page fetch is result
 // context for a vertical, never a gate — a typed challenge on it must not
 // kill a run whose extractor fetches its own targets (reddit-class: the
 // HTML page is blocked, the record comes from elsewhere).
 func TestRun_VerticalSurvivesBlockedPage(t *testing.T) {
 	target := "https://escalation.test/watch?v=abc123def45"
-	ex := vertical.Extractor{
-		Info:  vertical.Info{Name: "escalationtest", Label: "Escalation test", Desc: "test-only"},
-		Match: func(u *url.URL) bool { return u.Host == "escalation.test" },
-		Extract: func(_ context.Context, _ vertical.Fetcher, _ *url.URL) (map[string]any, error) {
-			return map[string]any{"title": "Widget"}, nil
-		},
-	}
-	if err := vertical.Register(ex); err != nil {
+	if err := registerEscalation(); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	db := openScrapeDB(t)
@@ -356,21 +363,14 @@ func TestRun_VerticalSurvivesBlockedPage(t *testing.T) {
 // fetch while the extractor's own targets carry the data).
 func TestRun_VerticalSurvivesQualityGate(t *testing.T) {
 	target := "https://escalation.test/shell"
-	ex := vertical.Extractor{
-		Info:  vertical.Info{Name: "escalationtest2", Label: "Escalation test", Desc: "test-only"},
-		Match: func(u *url.URL) bool { return u.Host == "escalation.test" },
-		Extract: func(_ context.Context, _ vertical.Fetcher, _ *url.URL) (map[string]any, error) {
-			return map[string]any{"title": "Widget"}, nil
-		},
-	}
-	if err := vertical.Register(ex); err != nil {
+	if err := registerEscalation(); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	db := openScrapeDB(t)
 	deps := fakeDeps(db, &fakeExtractor{}, "")
 	deps.Fetcher = &fakeGatedFetcher{bodies: map[string][]byte{target: []byte("<html><head><title>shell</title></head><body><p>hi</p></body></html>")}}
 	res, err := scrape.Run(context.Background(), deps, target, scrape.Options{
-		Render: "auto", Vertical: "escalationtest2",
+		Render: "auto", Vertical: "escalationtest",
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
