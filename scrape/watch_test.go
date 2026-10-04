@@ -140,6 +140,10 @@ func TestWatch_BaselineThenChange(t *testing.T) {
 	if res.WebhookStatus != "sent" {
 		t.Errorf("WebhookStatus = %q, want sent", res.WebhookStatus)
 	}
+	// CheckedAt is the stored key (PutSnapshot's return), not a second clock read.
+	if latest, ok, err := db.LatestSnapshot(url); err != nil || !ok || !res.CheckedAt.Equal(latest.CheckedAt) {
+		t.Errorf("CheckedAt = %v, want the stored checked_at %v (%v, %v)", res.CheckedAt, latest.CheckedAt, ok, err)
+	}
 	// Snapshot rows == check count (2), including same-second inserts.
 	if n, err := db.TableCount("snapshots"); err != nil || n != 2 {
 		t.Errorf("snapshot rows = %d (%v), want 2", n, err)

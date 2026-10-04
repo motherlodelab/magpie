@@ -25,7 +25,7 @@ func openTempDB(t *testing.T) *store.DB {
 
 func TestTablesExist(t *testing.T) {
 	db := openTempDB(t)
-	for _, tbl := range []string{"selector_cache", "crawl_state", "dedup", "run_history", "llm_calls"} {
+	for _, tbl := range []string{"selector_cache", "crawl_state", "dedup", "run_history", "llm_calls", "snapshots", "research_runs", "facts"} {
 		n, err := db.TableCount(tbl)
 		if err != nil {
 			t.Errorf("table %s: %v", tbl, err)

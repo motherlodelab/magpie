@@ -15,41 +15,60 @@ type Snapshot struct {
 	Changed     bool
 }
 
-// PutSnapshot appends one snapshot row. Append-only, no pruning
-// (ponytail: unbounded history for long-lived watches; a keep-N prune
-// is the upgrade path when a user actually hits it). checked_at is
-// RFC3339Nano, NOT second precision: the (url_hash, checked_at) primary
-// key plus the 100ms test ticks make same-second inserts routine, so
-// second precision would be a guaranteed PK-violation flake — and
-// fixed-width Nano keeps lexicographic ORDER BY correct.
-func (d *DB) PutSnapshot(rawURL, contentHash, markdown string, changed bool) error {
+// PutSnapshot appends one snapshot row and returns the checked_at it
+// stored — the exact pin SnapshotAt reads back and a research fact cites.
+// Append-only, no pruning (ponytail: unbounded history for long-lived
+// watches; a keep-N prune is the upgrade path when a user actually hits
+// it, and it must skip rows pinned by facts — the FK refuses to delete
+// them anyway). checked_at is RFC3339Nano, NOT second precision: the
+// (url_hash, checked_at) primary key plus the 100ms test ticks make
+// same-second inserts routine, so second precision would be a guaranteed
+// PK-violation flake. RFC3339Nano trims trailing zeros, so it is not
+// fixed-width: lexicographic ORDER BY can misorder two rows only when the
+// earlier lands exactly on a 10^-k s boundary and the later arrives within
+// 10^-k s of it — negligible, and exact-match reads (SnapshotAt) don't care.
+func (d *DB) PutSnapshot(rawURL, contentHash, markdown string, changed bool) (time.Time, error) {
+	now := time.Now().UTC() // UTC() also strips the monotonic reading: parse(format(now)) == now
 	_, err := d.db.Exec(`INSERT INTO snapshots(url_hash, url, content_hash, markdown, checked_at, changed) VALUES(?,?,?,?,?,?)`,
 		sha256Hex(rawURL), rawURL, contentHash, markdown,
-		time.Now().UTC().Format(time.RFC3339Nano), boolInt(changed))
+		now.Format(time.RFC3339Nano), boolInt(changed))
 	if err != nil {
-		return fmt.Errorf("store: put snapshot: %w", err)
+		return time.Time{}, fmt.Errorf("store: put snapshot: %w", err)
 	}
-	return nil
+	return now, nil
 }
 
 // LatestSnapshot returns the newest snapshot for rawURL; (zero, false,
 // nil) on an empty history.
 func (d *DB) LatestSnapshot(rawURL string) (Snapshot, bool, error) {
+	return d.oneSnapshot("latest snapshot", `WHERE url_hash=? ORDER BY checked_at DESC LIMIT 1`, sha256Hex(rawURL))
+}
+
+// SnapshotAt returns the exact version stored at checkedAt (a value
+// PutSnapshot returned, in any time zone) — older pins survive newer
+// versions. (zero, false, nil) on a miss.
+func (d *DB) SnapshotAt(rawURL string, checkedAt time.Time) (Snapshot, bool, error) {
+	return d.oneSnapshot("snapshot at", `WHERE url_hash=? AND checked_at=?`,
+		sha256Hex(rawURL), checkedAt.UTC().Format(time.RFC3339Nano))
+}
+
+// oneSnapshot runs the shared one-row query, scan and parse; where is the
+// clause after FROM snapshots.
+func (d *DB) oneSnapshot(op, where string, args ...any) (Snapshot, bool, error) {
 	var s Snapshot
 	var checked string
 	var changed int
-	err := d.db.QueryRow(`SELECT url, content_hash, markdown, checked_at, changed
-		FROM snapshots WHERE url_hash=? ORDER BY checked_at DESC LIMIT 1`,
-		sha256Hex(rawURL)).Scan(&s.URL, &s.ContentHash, &s.Markdown, &checked, &changed)
+	err := d.db.QueryRow(`SELECT url, content_hash, markdown, checked_at, changed FROM snapshots `+where, args...).
+		Scan(&s.URL, &s.ContentHash, &s.Markdown, &checked, &changed)
 	if err == sql.ErrNoRows {
 		return Snapshot{}, false, nil
 	}
 	if err != nil {
-		return Snapshot{}, false, fmt.Errorf("store: latest snapshot: %w", err)
+		return Snapshot{}, false, fmt.Errorf("store: %s: %w", op, err)
 	}
 	t, err := time.Parse(time.RFC3339Nano, checked)
 	if err != nil {
-		return Snapshot{}, false, fmt.Errorf("store: latest snapshot: parse checked_at: %w", err)
+		return Snapshot{}, false, fmt.Errorf("store: %s: parse checked_at: %w", op, err)
 	}
 	s.CheckedAt = t
 	s.Changed = changed != 0

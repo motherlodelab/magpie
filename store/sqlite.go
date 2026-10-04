@@ -89,6 +89,35 @@ CREATE TABLE IF NOT EXISTS snapshots (
     changed      INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (url_hash, checked_at)
 );
+
+CREATE TABLE IF NOT EXISTS research_runs (
+    run_id      TEXT PRIMARY KEY,
+    question    TEXT NOT NULL,
+    plan        TEXT NOT NULL,
+    options     TEXT NOT NULL,
+    status      TEXT NOT NULL,
+    steer       TEXT NOT NULL DEFAULT '',
+    report      TEXT,
+    started_at  TEXT NOT NULL,
+    finished_at TEXT,
+    FOREIGN KEY(run_id) REFERENCES run_history(run_id)
+);
+
+CREATE TABLE IF NOT EXISTS facts (
+    run_id     TEXT NOT NULL,
+    fact_id    TEXT NOT NULL,
+    claim      TEXT NOT NULL,
+    quote      TEXT NOT NULL,
+    url_hash   TEXT NOT NULL,
+    checked_at TEXT NOT NULL,
+    published  TEXT NOT NULL DEFAULT '',
+    confidence REAL NOT NULL DEFAULT 0,
+    status     TEXT NOT NULL DEFAULT 'unverified',
+    note       TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (run_id, fact_id),
+    FOREIGN KEY(run_id) REFERENCES research_runs(run_id),
+    FOREIGN KEY(url_hash, checked_at) REFERENCES snapshots(url_hash, checked_at)
+);
 `
 
 // DB is a single-writer SQLite handle.
@@ -755,6 +784,8 @@ var tables = map[string]bool{
 	"run_history":    true,
 	"llm_calls":      true,
 	"snapshots":      true,
+	"research_runs":  true,
+	"facts":          true,
 	"records":        true, // created on demand by sqlite-format crawls
 }
 
