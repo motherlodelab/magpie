@@ -53,7 +53,7 @@ func CheckForChange(ctx context.Context, d Deps, rawURL string, o Options) (Watc
 		return WatchResult{}, err
 	}
 	newHash := sha256Hex(res.Markdown)
-	out := WatchResult{URL: rawURL, NewHash: newHash, CheckedAt: time.Now().UTC()}
+	out := WatchResult{URL: rawURL, NewHash: newHash}
 	prev, ok, err := d.DB.LatestSnapshot(rawURL)
 	if err != nil {
 		return WatchResult{}, err
@@ -71,7 +71,8 @@ func CheckForChange(ctx context.Context, d Deps, rawURL string, o Options) (Watc
 			out.LinksAdded, out.LinksRemoved = linkDelta(clean.MarkdownLinks(prev.Markdown), clean.MarkdownLinks(res.Markdown))
 		}
 	}
-	if err := d.DB.PutSnapshot(rawURL, newHash, res.Markdown, out.Changed); err != nil {
+	// CheckedAt is the stored key, so the webhook below carries it too.
+	if out.CheckedAt, err = d.DB.PutSnapshot(rawURL, newHash, res.Markdown, out.Changed); err != nil {
 		return WatchResult{}, err
 	}
 	if out.Changed && o.Webhook != "" {
