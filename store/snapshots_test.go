@@ -1,6 +1,8 @@
 package store_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"testing"
 	"time"
 
@@ -205,5 +207,53 @@ func TestSnapshotAt_Miss(t *testing.T) {
 		if !ok && got != (store.Snapshot{}) {
 			t.Errorf("%s: miss returned %+v, want zero Snapshot", tc.name, got)
 		}
+	}
+}
+
+// TestRecordSnapshot: the shared check-in's rule — the first version is a
+// baseline, the same markdown re-pins unchanged, new markdown is a change —
+// and the returned pin reads back the exact markdown a fact cites.
+func TestRecordSnapshot(t *testing.T) {
+	t.Parallel()
+	db := openTempDB(t)
+	const url = "https://example.com/record"
+	record := func(md string) store.Snapshot {
+		t.Helper()
+		at, err := db.RecordSnapshot(url, md)
+		if err != nil {
+			t.Fatalf("RecordSnapshot(%q): %v", md, err)
+		}
+		got, ok, err := db.SnapshotAt(url, at)
+		if err != nil || !ok {
+			t.Fatalf("SnapshotAt(pin) = (%v, %v), want the row just recorded", ok, err)
+		}
+		if got.Markdown != md {
+			t.Errorf("pin reads %q, want %q", got.Markdown, md)
+		}
+		return got
+	}
+
+	if s := record("version one"); s.Changed {
+		t.Error("first version Changed = true, want a baseline")
+	}
+	if s := record("version one"); s.Changed {
+		t.Error("same markdown Changed = true, want false")
+	}
+	s := record("version two")
+	if !s.Changed {
+		t.Error("new markdown Changed = false, want true")
+	}
+	sum := sha256.Sum256([]byte("version two"))
+	if want := hex.EncodeToString(sum[:]); s.ContentHash != want {
+		t.Errorf("ContentHash = %q, want hex SHA-256 %q", s.ContentHash, want)
+	}
+
+	for _, md := range []string{"", "  \n"} {
+		if _, err := db.RecordSnapshot(url, md); err == nil {
+			t.Errorf("RecordSnapshot(%q) = nil error, want empty-markdown error", md)
+		}
+	}
+	if all, err := db.ListSnapshots(url, 10); err != nil || len(all) != 3 {
+		t.Errorf("ListSnapshots = %d rows (%v), want 3 (empty markdown stores nothing)", len(all), err)
 	}
 }

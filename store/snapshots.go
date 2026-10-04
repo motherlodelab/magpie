@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -36,6 +37,27 @@ func (d *DB) PutSnapshot(rawURL, contentHash, markdown string, changed bool) (ti
 		return time.Time{}, fmt.Errorf("store: put snapshot: %w", err)
 	}
 	return now, nil
+}
+
+// RecordSnapshot is the check-in every reader shares (desktop scrapes,
+// research reads): hash the markdown (hex SHA-256, watch's content hash),
+// mark it changed against the latest version — the first version is a
+// baseline, not a change (watch's rule) — append it, and return the pin a
+// store.Fact cites. Empty or whitespace-only markdown is an error: there is
+// nothing to pin. Watch keeps its own path (it needs the previous markdown
+// for the diff).
+// ponytail: latest-then-put is not atomic — two readers of one URL at once
+// can both mark changed; the flag is display-only and both pins stay exact.
+func (d *DB) RecordSnapshot(rawURL, markdown string) (time.Time, error) {
+	if strings.TrimSpace(markdown) == "" {
+		return time.Time{}, fmt.Errorf("store: record snapshot: empty markdown for %q", rawURL)
+	}
+	hash := sha256Hex(markdown)
+	prev, ok, err := d.LatestSnapshot(rawURL)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return d.PutSnapshot(rawURL, hash, markdown, ok && prev.ContentHash != hash)
 }
 
 // LatestSnapshot returns the newest snapshot for rawURL; (zero, false,
