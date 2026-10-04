@@ -55,30 +55,31 @@ var efforts = map[string]struct{ SubResearchers, ToolCalls int }{
 // Normalized is the one validator every surface (CLI, MCP, desktop bridge)
 // calls: it returns a canonical copy — effort and tool-call defaults filled
 // in, domains canonicalized, sorted and de-duplicated — or an error naming
-// the field and the offending value. The caller's slices are never touched.
+// the field and the offending value. On error the returned Options is zero:
+// no half-filled value to misuse. The caller's slices are never touched.
 // SessionDomains pass through untouched (the desktop validates them).
 func (o Options) Normalized() (Options, error) {
 	if o.Provider == "" {
-		return o, fmt.Errorf("research: provider: required")
+		return Options{}, fmt.Errorf("research: provider: required")
 	}
 	if o.Effort == "" {
 		o.Effort = "standard"
 	}
 	e, ok := efforts[o.Effort]
 	if !ok {
-		return o, fmt.Errorf("research: effort: %q, want quick|standard|deep", o.Effort)
+		return Options{}, fmt.Errorf("research: effort: %q, want quick|standard|deep", o.Effort)
 	}
 	if c := o.MaxCostUSD; !(c > 0) || math.IsInf(c, 1) { // !(c > 0) also catches NaN
-		return o, fmt.Errorf("research: max_cost_usd: %v, want a finite amount > 0", c)
+		return Options{}, fmt.Errorf("research: max_cost_usd: %v, want a finite amount > 0", c)
 	}
 	if o.MaxToolCalls < 0 {
-		return o, fmt.Errorf("research: max_tool_calls: %d, want >= 0", o.MaxToolCalls)
+		return Options{}, fmt.Errorf("research: max_tool_calls: %d, want >= 0", o.MaxToolCalls)
 	}
 	if o.MaxToolCalls == 0 {
 		o.MaxToolCalls = e.ToolCalls
 	}
 	if o.JudgeProvider != "" && o.JudgeModel == "" {
-		return o, fmt.Errorf("research: judge_model: judge provider %q needs a judge model", o.JudgeProvider)
+		return Options{}, fmt.Errorf("research: judge_model: judge provider %q needs a judge model", o.JudgeProvider)
 	}
 	for _, l := range []struct {
 		name string
@@ -91,7 +92,7 @@ func (o Options) Normalized() (Options, error) {
 		for _, s := range *l.list {
 			d, err := normDomain(s)
 			if err != nil {
-				return o, fmt.Errorf("research: sources.%s: %q: %w", l.name, s, err)
+				return Options{}, fmt.Errorf("research: sources.%s: %q: %w", l.name, s, err)
 			}
 			out = append(out, d)
 		}
@@ -99,7 +100,7 @@ func (o Options) Normalized() (Options, error) {
 		*l.list = slices.Compact(out)
 	}
 	if f, t := o.Sources.From, o.Sources.To; !f.IsZero() && !t.IsZero() && f.After(t) {
-		return o, fmt.Errorf("research: sources.from: %s is after to %s", f.Format(time.RFC3339), t.Format(time.RFC3339))
+		return Options{}, fmt.Errorf("research: sources.from: %s is after to %s", f.Format(time.RFC3339), t.Format(time.RFC3339))
 	}
 	return o, nil
 }

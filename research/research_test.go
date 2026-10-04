@@ -85,13 +85,16 @@ func TestNormalized_Rejects(t *testing.T) {
 	} {
 		o := valid()
 		tc.edit(&o)
-		_, err := o.Normalized()
+		n, err := o.Normalized()
 		if err == nil {
 			t.Errorf("%s: Normalized = nil error, want one naming %q", tc.name, tc.field)
 			continue
 		}
 		if !strings.Contains(err.Error(), tc.field) {
 			t.Errorf("%s: error %q does not name %q", tc.name, err, tc.field)
+		}
+		if !reflect.DeepEqual(n, research.Options{}) {
+			t.Errorf("%s: Normalized on error = %+v, want zero (no half-filled value to misuse)", tc.name, n)
 		}
 	}
 }
