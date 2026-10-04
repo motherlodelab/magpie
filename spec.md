@@ -596,6 +596,45 @@ CREATE TABLE IF NOT EXISTS llm_calls (
     ts                TEXT NOT NULL,
     FOREIGN KEY(run_id) REFERENCES run_history(run_id)
 );
+
+CREATE TABLE IF NOT EXISTS snapshots (
+    url_hash     TEXT NOT NULL,             -- SHA-256 of the URL
+    url          TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    markdown     TEXT NOT NULL,
+    checked_at   TEXT NOT NULL,             -- RFC3339Nano UTC; append-only history
+    changed      INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (url_hash, checked_at)
+);
+
+CREATE TABLE IF NOT EXISTS research_runs (
+    run_id      TEXT PRIMARY KEY,
+    question    TEXT NOT NULL,
+    plan        TEXT NOT NULL,             -- JSON plan at launch, opaque to store
+    options     TEXT NOT NULL,             -- JSON options minus secrets, opaque to store
+    status      TEXT NOT NULL,             -- running|writing|done|failed|stopped (validated in Go)
+    steer       TEXT NOT NULL DEFAULT '',  -- latest steering message (resume)
+    report      TEXT,                      -- final markdown; set iff status=done
+    started_at  TEXT NOT NULL,
+    finished_at TEXT,
+    FOREIGN KEY(run_id) REFERENCES run_history(run_id)
+);
+
+CREATE TABLE IF NOT EXISTS facts (
+    run_id     TEXT NOT NULL,
+    fact_id    TEXT NOT NULL,              -- "f1"… minted per run by PutFacts
+    claim      TEXT NOT NULL,              -- as extracted; never rewritten
+    quote      TEXT NOT NULL,              -- claimed verbatim substring of the pinned markdown
+    url_hash   TEXT NOT NULL,
+    checked_at TEXT NOT NULL,              -- RFC3339Nano; with url_hash, the snapshot pin
+    published  TEXT NOT NULL DEFAULT '',   -- page-stated date, '' unknown
+    confidence REAL NOT NULL DEFAULT 0,    -- model-assigned, display-only
+    status     TEXT NOT NULL DEFAULT 'unverified', -- unverified|verified|softened|dropped|contested
+    note       TEXT NOT NULL DEFAULT '',   -- softened: reworded claim; dropped/contested: why
+    PRIMARY KEY (run_id, fact_id),
+    FOREIGN KEY(run_id) REFERENCES research_runs(run_id),
+    FOREIGN KEY(url_hash, checked_at) REFERENCES snapshots(url_hash, checked_at)
+);
 ```
 
 ### 9.3 Config format & precedence
