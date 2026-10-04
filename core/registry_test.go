@@ -7,6 +7,7 @@ import (
 )
 
 func TestRegistry_Gate(t *testing.T) {
+	t.Cleanup(core.SaveRegistry())
 	// Accept: same major, any minor/patch skew.
 	for _, v := range []string{"1.0.0", "1.0.1", "1.9.0", "1.99.99"} {
 		id := "test.accept." + v
@@ -36,6 +37,7 @@ func TestRegistry_Gate(t *testing.T) {
 }
 
 func TestRegistry_Duplicate(t *testing.T) {
+	t.Cleanup(core.SaveRegistry())
 	id := "test.dup.module"
 	if err := core.RegisterModule(core.ModuleInfo{ID: id, APIVersion: "1.0.0", Kind: core.KindExporter}); err != nil {
 		t.Fatalf("first RegisterModule: %v", err)
@@ -46,6 +48,7 @@ func TestRegistry_Duplicate(t *testing.T) {
 }
 
 func TestRegistry_MustRegisterPanics(t *testing.T) {
+	t.Cleanup(core.SaveRegistry())
 	id := "test.mustpanic.module"
 	core.MustRegister(core.ModuleInfo{ID: id, APIVersion: "1.0.0", Kind: core.KindCleaner})
 	defer func() {
@@ -63,6 +66,10 @@ func TestRegistry_LookupMiss(t *testing.T) {
 }
 
 func TestRegistry_ListSortedAndCopy(t *testing.T) {
+	t.Cleanup(core.SaveRegistry())
+	for _, id := range []string{"test.list.b", "test.list.a"} { // registered out of order
+		core.MustRegister(core.ModuleInfo{ID: id, APIVersion: "1.0.0", Kind: core.KindFetcher})
+	}
 	mods := core.ListModules()
 	for i := 1; i < len(mods); i++ {
 		if mods[i-1].ID >= mods[i].ID {
@@ -70,7 +77,7 @@ func TestRegistry_ListSortedAndCopy(t *testing.T) {
 		}
 	}
 	if len(mods) == 0 {
-		t.Fatal("ListModules empty, want registered test modules")
+		t.Fatal("ListModules empty, want the registered test modules")
 	}
 	// Defensive copy: mutating the result must not affect the registry.
 	mods[0].ID = "test.mutated"

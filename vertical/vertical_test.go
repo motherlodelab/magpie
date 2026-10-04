@@ -289,11 +289,11 @@ func TestFetchJSON_Vectors(t *testing.T) {
 	})
 }
 
-// TestRegister covers the embedder seam (placed after the exact-set
-// tests above: registry appends are global, so those must see the
-// unpolluted built-in list; only the UA test below follows and it never
-// touches the registry).
+// TestRegister covers the embedder seam. Registry appends are global, so
+// it restores the built-in list on exit — the exact-set tests (and its
+// own -count=N reruns) never see its extractors.
 func TestRegister(t *testing.T) {
+	t.Cleanup(vertical.SaveRegistry())
 	fake := vertical.Extractor{
 		Info:  vertical.Info{Name: "zz_test_fake", Label: "Fake", Desc: "test-only", Patterns: []string{"https://fake.test/x"}},
 		Match: func(u *url.URL) bool { return u.Host == "fake.test" },
