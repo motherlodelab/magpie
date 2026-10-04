@@ -15,7 +15,8 @@
   klauspost/brotli, ledongthuc/pdf.
 - **Layering — dependency arrows point one way, surface → orchestration → stages → leaves.**
   Leaves `clean extract store config plugin` import no magpie packages (keep portable:
-  the GUI port depends on it). Orchestration (`crawl`, `scrape` via its `Deps` seam) may
+  the GUI port depends on it). Orchestration (`crawl`, `scrape` via its `Deps` seam, and
+  `research` above both — it may import `scrape`/`crawl`, never the reverse) may
   import stages; `mcp` and `cli` are surfaces that import inward; only `build` (codegen)
   and `cmd` import `cli`; nothing imports `mcp`. rod is imported only inside `fetch/`,
   behind the `Fetcher` interface — static fetch first, browser escalation on detect
