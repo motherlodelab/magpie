@@ -24,6 +24,11 @@ func TestQuoteFound(t *testing.T) {
 		{"curly vs straight", `She said "prices won't fall" soon`, true},
 		{"nbsp and ellipsis", "prices won't fall\" soon... maybe", true},
 		{"escapes", "A *literal* asterisk line", true},
+		// Real-provider smoke, 2026-10-05: the model closes a mid-sentence
+		// fragment with a period, or wraps the quote in quote marks.
+		{"period added mid-sentence", "according to the annual survey.", true},
+		{"wrapped in quotes", `"The alpha index rose 12 percent in 2025"`, true},
+		{"trim never shortens past the words", "The alpha index rose 12 percent in 2026.", false},
 		{"absent", "The beta index fell 3 percent in 2024", false},
 		{"too short", "rose 12 percent", false}, // < 20 runes after folding matches anywhere
 		{"too long", strings.Repeat("alpha ", 101), false},

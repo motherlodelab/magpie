@@ -35,13 +35,17 @@ func normText(s string) string {
 	return strings.Join(strings.Fields(folds.Replace(strings.ToLower(s))), " ")
 }
 
-// quoteFound: minQuoteRunes ≤ len(normText(quote)) ≤ maxQuoteRunes and
-// normText(markdown) contains it.
+// quoteFound: minQuoteRunes ≤ len(q) ≤ maxQuoteRunes and normText(markdown)
+// contains q, where q is normText(quote) with its edge punctuation and
+// wrapping quote marks trimmed. Models end a mid-sentence fragment with a
+// period ("…platforms." where the page goes on ", making it…") or wrap it
+// in quotes; the trim moves where a quote may end, never what it says —
+// every remaining word must still be on the page, in order.
 func quoteFound(markdown, quote string) bool { return quoteIn(normText(markdown), quote) }
 
 // quoteIn is quoteFound against an already-folded page.
 func quoteIn(page, quote string) bool {
-	q := normText(quote)
+	q := strings.TrimSpace(strings.Trim(normText(quote), `.,;:!?"' `))
 	if n := utf8.RuneCountInString(q); n < minQuoteRunes || n > maxQuoteRunes {
 		return false
 	}
