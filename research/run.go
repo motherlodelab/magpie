@@ -51,8 +51,9 @@ type Job struct {
 	Question string  // required, ≤ 2000 runes; on resume the stored question wins
 	Options  Options // Run normalizes it; persisted as research_runs.options
 	// Approve sees the drafted plan before any search. It returns the plan
-	// to run (edits are re-validated) or an error that stops the run before
-	// research spends. nil = run the draft. Skipped on resume.
+	// to run (edits are re-validated), a Redraft for a fresh draft (at most
+	// 3), or an error that stops the run before research spends. nil = run
+	// the draft. Skipped on resume.
 	Approve func(Plan) (Plan, error)
 	OnEvent func(Event) // nil = silent; called serially (never concurrently); must not block
 	Control *Control    // nil = no steering
@@ -342,27 +343,55 @@ func backends(o Options, keyFor func(string) string) ([]string, error) {
 // (the operator stopped it), not error. Run returns the inner error.
 type declinedError struct{ error }
 
+// Redraft is what Approve returns to ask for a fresh draft instead of the
+// one it was shown: Note is the operator's guidance, sent to the plan call
+// with the rejected draft. Each redraft is one more budgeted plan call; a
+// redraft past maxRedrafts ends the run declined.
+type Redraft struct{ Note string }
+
+func (Redraft) Error() string { return "research: plan: redraft requested" }
+
+// maxRedrafts bounds the review loop; surfaces guard it first.
+const maxRedrafts = 3
+
 // scope drafts the plan within the effort's fan-out and passes it through
-// Approve. Go bounds the fan-out, not the prompt (spec §9 risk 5).
+// Approve, redrafting on request. Go bounds the fan-out, not the prompt
+// (spec §9 risk 5).
 func (r *run) scope(ctx context.Context, question string, approve func(Plan) (Plan, error)) (Plan, error) {
 	n := efforts[r.o.Effort].SubResearchers
-	var p Plan
-	if err := r.call(ctx, false, "plan", planSchema, "Question: "+question, planInstr(r.o.Effort, n), &p); err != nil {
-		return Plan{}, err
+	material, instr := "Question: "+question, planInstr(r.o.Effort, n)
+	for redrafts := 0; ; redrafts++ {
+		var p Plan
+		if err := r.call(ctx, false, "plan", planSchema, material, instr, &p); err != nil {
+			return Plan{}, err
+		}
+		p = tidyPlan(p, n)
+		if err := p.Validate(r.o); err != nil {
+			return Plan{}, err
+		}
+		if approve == nil {
+			return p, nil
+		}
+		edited, err := approve(p)
+		var rd Redraft
+		switch {
+		case errors.As(err, &rd) && redrafts < maxRedrafts:
+			prev, merr := json.Marshal(p)
+			if merr != nil {
+				return Plan{}, merr
+			}
+			// One line: the note can't open a section of its own in the prompt.
+			material = fmt.Sprintf("Question: %s\n\nPrevious draft: %s\n\nOperator's note: %s", question, prev, oneLine(rd.Note))
+			instr = planInstr(r.o.Effort, n) + redraftInstr
+			continue
+		case errors.As(err, &rd):
+			return Plan{}, declinedError{fmt.Errorf("research: plan: %d redrafts used — edit the plan or approve it", maxRedrafts)}
+		case err != nil:
+			return Plan{}, declinedError{err}
+		}
+		edited = tidyPlan(edited, n)
+		return edited, edited.Validate(r.o)
 	}
-	p = tidyPlan(p, n)
-	if err := p.Validate(r.o); err != nil {
-		return Plan{}, err
-	}
-	if approve == nil {
-		return p, nil
-	}
-	edited, err := approve(p)
-	if err != nil {
-		return Plan{}, declinedError{err}
-	}
-	edited = tidyPlan(edited, n)
-	return edited, edited.Validate(r.o)
 }
 
 // tidyPlan truncates to n angles, drops blank questions, and gives an

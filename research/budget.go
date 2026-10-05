@@ -166,10 +166,11 @@ func (b *Budget) stoppedLocked() error {
 
 // Estimate is a pre-run projection — a cap is the guarantee, this is not.
 type Estimate struct {
-	LLMCalls  int
-	ToolCalls int     // the run's tool-call cap
-	USD       float64 // priced calls only: flat and local providers cost 0
-	Unpriced  bool    // a role's model has no price on file (the gate still projects $2/1M for it)
+	LLMCalls       int
+	ToolCalls      int     // the run's tool-call cap
+	SubResearchers int     // the effort's fan-out: at most this many angles
+	USD            float64 // priced calls only: flat and local providers cost 0
+	Unpriced       bool    // a role's model has no price on file (the gate still projects $2/1M for it)
 }
 
 // EstimateRun prices one run's call model; o must come from Normalized.
@@ -184,7 +185,7 @@ func EstimateRun(o Options) Estimate {
 	e := efforts[o.Effort]
 	reads := max(1, o.MaxToolCalls/2) // searches cost no LLM; about half the tool calls are reads
 	jp, jm := o.judge()
-	est := Estimate{ToolCalls: o.MaxToolCalls}
+	est := Estimate{ToolCalls: o.MaxToolCalls, SubResearchers: e.SubResearchers}
 	for _, c := range []struct {
 		n               int
 		provider, model string
