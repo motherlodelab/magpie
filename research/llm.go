@@ -94,6 +94,10 @@ Plan research for the question above.
 - The brief is 2-4 sentences on what a complete answer must cover.`, effort, n)
 }
 
+// redraftInstr extends planInstr when the operator asked for a new draft.
+const redraftInstr = `
+- The operator rejected the previous draft below the question. Write a new plan that follows the operator's note; keep what the note doesn't ask to change.`
+
 const extractInstr = `TASK: extract
 From the page text above, extract up to 8 facts that bear on the research question.
 - claim: one self-contained sentence.

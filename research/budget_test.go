@@ -331,3 +331,16 @@ func TestEstimateRun_Judge(t *testing.T) {
 		}
 	}
 }
+
+// TestEstimateRun_SubResearchers: the effort's fan-out, for surfaces that
+// label efforts by it.
+func TestEstimateRun_SubResearchers(t *testing.T) {
+	t.Parallel()
+	for effort, want := range map[string]int{"quick": 1, "standard": 3, "deep": 5} {
+		o := valid()
+		o.Effort = effort
+		if got := research.EstimateRun(mustNorm(t, o)).SubResearchers; got != want {
+			t.Errorf("%s: SubResearchers = %d, want %d", effort, got, want)
+		}
+	}
+}
