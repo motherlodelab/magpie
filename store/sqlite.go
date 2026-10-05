@@ -157,6 +157,10 @@ func Open(path string) (*DB, error) {
 		_ = db.Close() //nolint:errcheck // error path; close failure would mask the real error
 		return nil, err
 	}
+	if err := wdb.addMissingColumns("snapshots", sourceColumn); err != nil {
+		_ = db.Close() //nolint:errcheck // error path; close failure would mask the real error
+		return nil, err
+	}
 	return wdb, nil
 }
 
@@ -179,9 +183,21 @@ var errorColumns = []struct{ name, def string }{
 }
 
 func (d *DB) migrateRunHistory() error {
-	rows, err := d.db.Query(`PRAGMA table_info(run_history)`)
+	return d.addMissingColumns("run_history", append(fetchColumns, errorColumns...))
+}
+
+// sourceColumn tags who wrote a snapshot: 'watch' (PutSnapshot), 'read'
+// (RecordSnapshot), or empty (rows from before the column; watch reads
+// them as its own, so an existing watch keeps its baseline).
+var sourceColumn = []struct{ name, def string }{{"source", "TEXT NOT NULL DEFAULT ''"}}
+
+// addMissingColumns brings an older file up to the DDL: each column the
+// table lacks (PRAGMA table_info) is added with its definition. Additive
+// only — the one migration pattern this store uses.
+func (d *DB) addMissingColumns(table string, cols []struct{ name, def string }) error {
+	rows, err := d.db.Query(`PRAGMA table_info(` + table + `)`)
 	if err != nil {
-		return fmt.Errorf("store: migrate run_history: %w", err)
+		return fmt.Errorf("store: migrate %s: %w", table, err)
 	}
 	has := map[string]bool{}
 	for rows.Next() {
@@ -192,21 +208,21 @@ func (d *DB) migrateRunHistory() error {
 		var pk int
 		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
 			_ = rows.Close() //nolint:errcheck // read-only; close error unactionable
-			return fmt.Errorf("store: migrate run_history: %w", err)
+			return fmt.Errorf("store: migrate %s: %w", table, err)
 		}
 		has[name] = true
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close() //nolint:errcheck // read-only; close error unactionable
-		return fmt.Errorf("store: migrate run_history: %w", err)
+		return fmt.Errorf("store: migrate %s: %w", table, err)
 	}
 	_ = rows.Close() //nolint:errcheck // read-only; close error unactionable
-	for _, col := range append(fetchColumns, errorColumns...) {
+	for _, col := range cols {
 		if has[col.name] {
 			continue
 		}
-		if _, err := d.db.Exec(`ALTER TABLE run_history ADD COLUMN ` + col.name + ` ` + col.def); err != nil {
-			return fmt.Errorf("store: migrate run_history: add %s: %w", col.name, err)
+		if _, err := d.db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + col.name + ` ` + col.def); err != nil {
+			return fmt.Errorf("store: migrate %s: add %s: %w", table, col.name, err)
 		}
 	}
 	return nil

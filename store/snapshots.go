@@ -28,11 +28,18 @@ type Snapshot struct {
 // fixed-width: lexicographic ORDER BY can misorder two rows only when the
 // earlier lands exactly on a 10^-k s boundary and the later arrives within
 // 10^-k s of it — negligible, and exact-match reads (SnapshotAt) don't care.
+//
+// PutSnapshot is watch's check-in (source 'watch'): LatestWatchSnapshot
+// reads only these, so a read in between never moves watch's baseline.
 func (d *DB) PutSnapshot(rawURL, contentHash, markdown string, changed bool) (time.Time, error) {
+	return d.putSnapshot(rawURL, contentHash, markdown, changed, "watch")
+}
+
+func (d *DB) putSnapshot(rawURL, contentHash, markdown string, changed bool, source string) (time.Time, error) {
 	now := time.Now().UTC() // UTC() also strips the monotonic reading: parse(format(now)) == now
-	_, err := d.db.Exec(`INSERT INTO snapshots(url_hash, url, content_hash, markdown, checked_at, changed) VALUES(?,?,?,?,?,?)`,
+	_, err := d.db.Exec(`INSERT INTO snapshots(url_hash, url, content_hash, markdown, checked_at, changed, source) VALUES(?,?,?,?,?,?,?)`,
 		sha256Hex(rawURL), rawURL, contentHash, markdown,
-		now.Format(time.RFC3339Nano), boolInt(changed))
+		now.Format(time.RFC3339Nano), boolInt(changed), source)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("store: put snapshot: %w", err)
 	}
@@ -45,7 +52,7 @@ func (d *DB) PutSnapshot(rawURL, contentHash, markdown string, changed bool) (ti
 // baseline, not a change (watch's rule) — append it, and return the pin a
 // store.Fact cites. Empty or whitespace-only markdown is an error: there is
 // nothing to pin. Watch keeps its own path (it needs the previous markdown
-// for the diff).
+// for the diff). Rows are source 'read': watch never diffs against them.
 // ponytail: latest-then-put is not atomic — two readers of one URL at once
 // can both mark changed; the flag is display-only and both pins stay exact.
 func (d *DB) RecordSnapshot(rawURL, markdown string) (time.Time, error) {
@@ -57,13 +64,21 @@ func (d *DB) RecordSnapshot(rawURL, markdown string) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	return d.PutSnapshot(rawURL, hash, markdown, ok && prev.ContentHash != hash)
+	return d.putSnapshot(rawURL, hash, markdown, ok && prev.ContentHash != hash, "read")
 }
 
 // LatestSnapshot returns the newest snapshot for rawURL; (zero, false,
 // nil) on an empty history.
 func (d *DB) LatestSnapshot(rawURL string) (Snapshot, bool, error) {
 	return d.oneSnapshot("latest snapshot", `WHERE url_hash=? ORDER BY checked_at DESC LIMIT 1`, sha256Hex(rawURL))
+}
+
+// LatestWatchSnapshot is LatestSnapshot over watch's own check-ins
+// (PutSnapshot rows, plus rows older than the source column): a scrape or
+// research read of a watched URL between two checks must not hide the
+// change from the next check.
+func (d *DB) LatestWatchSnapshot(rawURL string) (Snapshot, bool, error) {
+	return d.oneSnapshot("latest watch snapshot", `WHERE url_hash=? AND source IN ('watch','') ORDER BY checked_at DESC LIMIT 1`, sha256Hex(rawURL))
 }
 
 // SnapshotAt returns the exact version stored at checkedAt (a value

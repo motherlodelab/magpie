@@ -2,7 +2,9 @@ package store_test
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -255,5 +257,68 @@ func TestRecordSnapshot(t *testing.T) {
 	}
 	if all, err := db.ListSnapshots(url, 10); err != nil || len(all) != 3 {
 		t.Errorf("ListSnapshots = %d rows (%v), want 3 (empty markdown stores nothing)", len(all), err)
+	}
+}
+
+// TestSnapshotsSource_Migration: a file from before snapshots.source gains
+// the column on open, and its rows (all watch check-ins or untagged scrapes)
+// stay watch's baseline — an existing watch must not lose it on upgrade.
+func TestSnapshotsSource_Migration(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const url = "https://example.com/legacy"
+	sum := sha256.Sum256([]byte(url))
+	for _, q := range []string{
+		`CREATE TABLE snapshots (url_hash TEXT NOT NULL, url TEXT NOT NULL, content_hash TEXT NOT NULL,
+			markdown TEXT NOT NULL, checked_at TEXT NOT NULL, changed INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (url_hash, checked_at))`,
+		`INSERT INTO snapshots VALUES('` + hex.EncodeToString(sum[:]) + `', '` + url + `', 'h0', 'legacy md', '2026-01-02T03:04:05Z', 0)`,
+	} {
+		if _, err := raw.Exec(q); err != nil {
+			t.Fatalf("legacy DDL: %v", err)
+		}
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("Open legacy file: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() }) //nolint:errcheck // test cleanup
+	got, ok, err := db.LatestWatchSnapshot(url)
+	if err != nil || !ok || got.ContentHash != "h0" {
+		t.Fatalf("LatestWatchSnapshot(legacy) = (%+v, %v, %v), want the legacy row", got, ok, err)
+	}
+	if _, err := db.PutSnapshot(url, "h1", "watch md", true); err != nil {
+		t.Fatalf("PutSnapshot after migration: %v", err)
+	}
+}
+
+// TestRecordSnapshot_Source: a read's check-in is history (LatestSnapshot)
+// but never watch's baseline (LatestWatchSnapshot).
+func TestRecordSnapshot_Source(t *testing.T) {
+	t.Parallel()
+	db := openTempDB(t)
+	const url = "https://example.com/watched"
+	if _, err := db.PutSnapshot(url, "w1", "watch md", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.RecordSnapshot(url, "read md"); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, err := db.LatestSnapshot(url); err != nil || !ok || got.Markdown != "read md" {
+		t.Errorf("LatestSnapshot = (%q, %v, %v), want the read row", got.Markdown, ok, err)
+	}
+	if got, ok, err := db.LatestWatchSnapshot(url); err != nil || !ok || got.ContentHash != "w1" {
+		t.Errorf("LatestWatchSnapshot = (%q, %v, %v), want the watch row", got.ContentHash, ok, err)
+	}
+	if _, ok, err := db.LatestWatchSnapshot("https://example.com/read-only"); err != nil || ok {
+		t.Errorf("LatestWatchSnapshot(unwatched) = (%v, %v), want a miss", ok, err)
 	}
 }

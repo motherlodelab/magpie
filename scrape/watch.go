@@ -37,7 +37,8 @@ type WatchResult struct {
 }
 
 // CheckForChange runs one zero-LLM check: scrape the URL markdown-only,
-// hash it, compare against the latest snapshot, diff on change, ALWAYS
+// hash it, compare against watch's own latest snapshot (a scrape or research
+// read in between is not a baseline), diff on change, ALWAYS
 // store the snapshot (first run = baseline), then fire the webhook once
 // on change. A webhook failure is recorded in WatchResult.WebhookStatus,
 // never returned — the snapshot is already stored and a dead sink must
@@ -54,7 +55,7 @@ func CheckForChange(ctx context.Context, d Deps, rawURL string, o Options) (Watc
 	}
 	newHash := sha256Hex(res.Markdown)
 	out := WatchResult{URL: rawURL, NewHash: newHash}
-	prev, ok, err := d.DB.LatestSnapshot(rawURL)
+	prev, ok, err := d.DB.LatestWatchSnapshot(rawURL)
 	if err != nil {
 		return WatchResult{}, err
 	}
