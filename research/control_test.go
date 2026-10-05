@@ -176,3 +176,35 @@ func TestRun_LLMErrorStreak(t *testing.T) {
 	}
 	e.settle(t)
 }
+
+// TestRun_Steer: the operator's steer is persisted, logged once, and read
+// by every extract after it.
+func TestRun_Steer(t *testing.T) {
+	e := newEnv(t, e2ePages(t), e2eSerp, defaultScript)
+	ctl := &research.Control{}
+	steers := 0
+	rep, err := research.Run(context.Background(), e.deps, e2eJob(e, func(j *research.Job) {
+		j.Control = ctl
+		j.OnEvent = func(ev research.Event) {
+			switch ev.Stage {
+			case "read":
+				ctl.Steer("focus on regional data")
+			case "steer":
+				steers++
+			}
+		}
+	}))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if rr, gerr := e.db.GetResearchRun(rep.RunID); gerr != nil || rr.Steer != "focus on regional data" {
+		t.Errorf("research_runs.steer = %q (%v), want the operator's steer", rr.Steer, gerr)
+	}
+	if steers != 1 {
+		t.Errorf("steer events = %d, want 1 (latest wins, logged once)", steers)
+	}
+	extracts := e.llm.recorded("extract")
+	if last := extracts[len(extracts)-1]; !strings.Contains(last.Material, "Operator steering: focus on regional data") {
+		t.Errorf("the last extract never saw the steer:\n%s", last.Material)
+	}
+}

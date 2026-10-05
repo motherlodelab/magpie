@@ -209,6 +209,8 @@ func printEvent(ev research.Event) {
 		fmt.Fprintf(os.Stderr, "skip    %s: %s\n", ev.URL, ev.Issue)
 	case "facts":
 		fmt.Fprintf(os.Stderr, "facts   %s from %s\n", ev.Detail, ev.URL)
+	case "write":
+		fmt.Fprintf(os.Stderr, "write   from %d usable facts\n", ev.Usable)
 	case "done":
 		fmt.Fprintf(os.Stderr, "done    %s ($%.4f of $%.2f)\n", ev.Detail, ev.SpentUSD, ev.CapUSD)
 	default:
