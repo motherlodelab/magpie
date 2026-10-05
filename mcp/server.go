@@ -1,8 +1,9 @@
 // Package mcp exposes the pipeline as an MCP server: scrape_url,
 // crawl_site, extract_structured, get_cached_selectors plus the Phase C
 // agent surface (batch, map, summarize, diff, brand, list_extractors,
-// vertical_scrape). Handlers share scrape.Run / crawl.Run with the CLI;
-// the transport (stdio vs Streamable HTTP) is chosen in cli/serve.go.
+// vertical_scrape), search, and deep research. Handlers share scrape.Run /
+// crawl.Run / research.Run with the CLI; the transport (stdio vs
+// Streamable HTTP) is chosen in cli/serve.go.
 package mcp
 
 import (
@@ -23,7 +24,7 @@ type Deps struct {
 	MaxCost         float64
 }
 
-// NewServer registers the twelve tools on a fresh server. Every tool goes
+// NewServer registers the thirteen tools on a fresh server. Every tool goes
 // through widenedTool (schema inferred from In exactly as before, then
 // widened for stringy clients) — never bare sdk.Tool literals, so a new
 // tool cannot silently miss coercion.
@@ -41,5 +42,6 @@ func NewServer(d Deps) *sdk.Server {
 	sdk.AddTool(server, widenedTool[ListExtractorsIn]("list_extractors", "List zero-LLM vertical extractors"), handleListExtractors(d))
 	sdk.AddTool(server, widenedTool[VerticalScrapeIn]("vertical_scrape", "Extract one URL with a named vertical extractor (zero LLM)"), handleVertical(d))
 	sdk.AddTool(server, widenedTool[SearchIn]("search", "Search the web via BYOK/no-key SERP providers, optionally scrape the top hits"), handleSearch(d))
+	sdk.AddTool(server, widenedTool[ResearchIn]("research", "Deep research: plan, search, read, verify every quote against a stored snapshot, write a cited report (unmetered; capped by max_cost_usd)"), handleResearch(d))
 	return server
 }

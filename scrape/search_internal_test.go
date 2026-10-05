@@ -421,3 +421,25 @@ func TestSearchScrapeTop(t *testing.T) {
 		}
 	}
 }
+
+func TestSearchProvidersFor(t *testing.T) {
+	keys := func(m map[string]string) func(string) string { return func(p string) string { return m[p] } }
+	for _, tc := range []struct {
+		name   string
+		searx  string
+		keyFor func(string) string
+		want   []string
+	}{
+		{"no keys, no env", "", keys(nil), []string{"duckduckgo"}},
+		{"nil keyFor", "", nil, []string{"duckduckgo"}},
+		{"searxng env", "http://127.0.0.1:8888", keys(nil), []string{"duckduckgo", "searxng"}},
+		{"blank env", "  ", keys(nil), []string{"duckduckgo"}},
+		{"brave key", "", keys(map[string]string{"brave": "k"}), []string{"brave", "duckduckgo"}},
+		{"empty exa key", "", keys(map[string]string{"exa": ""}), []string{"duckduckgo"}},
+	} {
+		t.Setenv("MAGPIE_SEARXNG_URL", tc.searx)
+		if got := SearchProvidersFor(tc.keyFor); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: SearchProvidersFor = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

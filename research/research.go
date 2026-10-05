@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/motherlodelab/magpie/extract"
+	"github.com/motherlodelab/magpie/scrape"
 	"github.com/motherlodelab/magpie/store"
 )
 
@@ -29,6 +31,7 @@ type Options struct {
 	Effort         string       `json:"effort"`                   // quick|standard|deep; "" = standard
 	Sources        SourcePolicy `json:"sources"`
 	SessionDomains []string     `json:"session_domains,omitempty"` // opaque to core: the desktop resolves sessions (DR6)
+	Search         []string     `json:"search,omitempty"`          // search backends; empty = the keyless ones (duckduckgo, searxng when configured) — keyed backends must be named
 }
 
 // SourcePolicy says where a run may read. Domains are bare host suffixes
@@ -61,6 +64,12 @@ var efforts = map[string]struct{ SubResearchers, ToolCalls int }{
 func (o Options) Normalized() (Options, error) {
 	if o.Provider == "" {
 		return Options{}, fmt.Errorf("research: provider: required")
+	}
+	names := extract.ProviderNames()
+	for _, p := range []struct{ field, name string }{{"provider", o.Provider}, {"judge_provider", o.JudgeProvider}} {
+		if p.name != "" && !slices.Contains(names, p.name) {
+			return Options{}, fmt.Errorf("research: %s: %q, want %s", p.field, p.name, strings.Join(names, "|"))
+		}
 	}
 	if o.Effort == "" {
 		o.Effort = "standard"
@@ -101,6 +110,21 @@ func (o Options) Normalized() (Options, error) {
 	}
 	if f, t := o.Sources.From, o.Sources.To; !f.IsZero() && !t.IsZero() && f.After(t) {
 		return Options{}, fmt.Errorf("research: sources.from: %s is after to %s", f.Format(time.RFC3339), t.Format(time.RFC3339))
+	}
+	if w := o.Sources.Web; w != nil && !*w {
+		return Options{}, fmt.Errorf("research: sources.web: off needs a non-web source (session sources arrive in DR6)")
+	}
+	if len(o.Search) > 0 {
+		names := scrape.SearchProviderNames()
+		out := make([]string, 0, len(o.Search)) // fresh: the caller's slice is never touched
+		for _, b := range o.Search {
+			if !slices.Contains(names, b) {
+				return Options{}, fmt.Errorf("research: search: %q, want %s", b, strings.Join(names, "|"))
+			}
+			out = append(out, b)
+		}
+		slices.Sort(out)
+		o.Search = slices.Compact(out)
 	}
 	return o, nil
 }

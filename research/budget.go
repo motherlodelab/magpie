@@ -63,6 +63,14 @@ func (b *Budget) AdmitResearch(provider, model, prompt string) (release func(), 
 	return b.admit(b.researchCap(), ErrWriteNow, true, provider, model, prompt)
 }
 
+// admitFinish admits the call that finishes a page already extracted (its
+// judge): against the research share like AdmitResearch, but write-now
+// doesn't refuse it — the page's facts are stored and paid for, and a
+// refusal would strand them unverified.
+func (b *Budget) admitFinish(provider, model, prompt string) (release func(), err error) {
+	return b.admit(b.researchCap(), ErrWriteNow, false, provider, model, prompt)
+}
+
 // AdmitWrite admits the forced write against the full MaxCostUSD; refusal
 // wraps crawl.ErrCostCeiling (the existing exit-code arm). It ignores
 // write-now — that is what write-now asks for. Release as AdmitResearch.

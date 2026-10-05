@@ -76,7 +76,7 @@ func DraftSchema(ctx context.Context, d Deps, o DraftOptions) (DraftOut, error) 
 	}
 	base := "Description: " + desc
 	if s := strings.TrimSpace(o.Sample); s != "" {
-		base += "\n\nPage sample (field names and shape only; don't copy its values):\n" + capWords(s, MaxDraftSampleWords)
+		base += "\n\nPage sample (field names and shape only; don't copy its values):\n" + CapWords(s, MaxDraftSampleWords)
 	}
 	runID := store.NewRunID()
 	if err := d.DB.BeginRun(runID, "schema"); err != nil {

@@ -65,7 +65,7 @@ func SummarizeText(ctx context.Context, d Deps, markdown string, o SummarizeOpti
 	if n > 20 {
 		n = 20
 	}
-	input := capWords(markdown, MaxSummarizeInputWords)
+	input := CapWords(markdown, MaxSummarizeInputWords)
 	system := fmt.Sprintf("Summarize the page in at most %d sentences. Reply with plain text only, no JSON, no markdown formatting.", n)
 
 	runID := store.NewRunID()
@@ -92,8 +92,8 @@ func SummarizeText(ctx context.Context, d Deps, markdown string, o SummarizeOpti
 	}, nil
 }
 
-// capWords clips text to the first n words (cost bound on the way in).
-func capWords(s string, n int) string {
+// CapWords clips text to the first n words (cost bound on the way in).
+func CapWords(s string, n int) string {
 	words := strings.Fields(s)
 	if len(words) <= n {
 		return s

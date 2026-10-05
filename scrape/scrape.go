@@ -81,6 +81,12 @@ type Options struct {
 	// MAGPIE_CDP_URL is the env fallback (flag wins). Scheme validated
 	// here pre-I/O; empty = launch locally as always.
 	CDP string
+	// RunID joins an existing run instead of minting one: no BeginRun, no
+	// FinishRun (the owner finishes it); fetch telemetry and LLM spend
+	// accrue to that row. Library-only (surfaces never set it); it must name
+	// a BeginRun row. Research reads pass it, so a run's ~20 reads are one
+	// History row, not twenty.
+	RunID string
 	// Proxy is a per-run egress override (pool-line grammar) that beats
 	// the env pool for this run's fetches: main page (static + browser),
 	// screenshot captures, and extractor sub-fetches (verticalFetcher
@@ -244,24 +250,31 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 		explicit = &ex
 	}
 
-	runID := store.NewRunID()
-	if err := d.DB.BeginRun(runID, "scrape"); err != nil {
-		return Result{}, err
+	runID, joined := o.RunID, o.RunID != ""
+	if !joined {
+		runID = store.NewRunID()
+		if err := d.DB.BeginRun(runID, "scrape"); err != nil {
+			return Result{}, err
+		}
 	}
 	// The row exists from here on: every failure carries its id, so the
 	// caller can annotate the "error" row (desktop D8 records why it
 	// failed). Stamped once here, so a new error return in run can't
 	// forget it.
-	res, err := run(ctx, d, rawURL, o, explicit, runID)
+	res, err := run(ctx, d, rawURL, o, explicit, runID, joined)
 	if err != nil {
 		res.RunID = runID
 	}
 	return res, err
 }
 
-// run is Run after BeginRun: it owns the run row's finish.
-func run(ctx context.Context, d Deps, rawURL string, o Options, explicit *vertical.Extractor, runID string) (Result, error) {
+// run is Run after BeginRun: it owns the run row's finish, unless the run
+// was joined (its owner finishes it).
+func run(ctx context.Context, d Deps, rawURL string, o Options, explicit *vertical.Extractor, runID string, joined bool) (Result, error) {
 	finish := func(ok, er int, status string) {
+		if joined {
+			return
+		}
 		if err := d.DB.FinishRun(runID, ok, er, status); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: finish run: %v\n", err)
 		}

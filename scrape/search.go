@@ -79,6 +79,28 @@ func SearchProviderNames() []string {
 	return names
 }
 
+// SearchProvidersFor returns the search backends usable with keyFor,
+// sorted: duckduckgo always, searxng when MAGPIE_SEARXNG_URL is set, each
+// keyed backend with a non-empty key (a nil keyFor means no keys). The one
+// home for "which backends can run" (research fans a search out over them).
+func SearchProvidersFor(keyFor func(string) string) []string {
+	var out []string
+	for _, p := range SearchProviderNames() {
+		switch {
+		case p == "searxng":
+			if strings.TrimSpace(os.Getenv("MAGPIE_SEARXNG_URL")) == "" {
+				continue
+			}
+		case searchProvidersNeedingKeys[p]:
+			if keyFor == nil || keyFor(p) == "" {
+				continue
+			}
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 // DefaultSearchProvider is the zero-key fallback so `magpie search`
 // works with no configuration at all.
 const DefaultSearchProvider = "duckduckgo"

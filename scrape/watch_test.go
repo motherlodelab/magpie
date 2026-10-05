@@ -362,3 +362,32 @@ func TestWatch_ChangeMetrics(t *testing.T) {
 
 	zero("unchanged re-check", check())
 }
+
+// TestCheckForChange_IgnoresReads: a scrape or research read of a watched
+// URL between two checks (RecordSnapshot) must not become watch's baseline —
+// the next check still reports the change and diffs against its own last
+// check (desktop DR1 correction 10).
+func TestCheckForChange_IgnoresReads(t *testing.T) {
+	db := openScrapeDB(t)
+	wf := &watchFetcher{body: pricePage("10")}
+	deps := scrape.Deps{DB: db, Fetcher: wf}
+	url := "https://shop.example.com/p/read"
+	if _, err := scrape.CheckForChange(context.Background(), deps, url, scrape.Options{Render: "static"}); err != nil {
+		t.Fatalf("baseline check: %v", err)
+	}
+	wf.set(pricePage("20"))
+	read, err := scrape.Run(context.Background(), deps, url, scrape.Options{Render: "static"})
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if _, err := db.RecordSnapshot(url, read.Markdown); err != nil {
+		t.Fatalf("RecordSnapshot: %v", err)
+	}
+	res, err := scrape.CheckForChange(context.Background(), deps, url, scrape.Options{Render: "static"})
+	if err != nil {
+		t.Fatalf("check after read: %v", err)
+	}
+	if !res.Changed || !strings.Contains(res.Diff, "+ 20") {
+		t.Errorf("check after a read = changed %v, diff %q; want the 10 → 20 change", res.Changed, res.Diff)
+	}
+}

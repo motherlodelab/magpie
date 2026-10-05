@@ -164,7 +164,7 @@ func TestToolCatalog(t *testing.T) {
 		got = append(got, tl.Name)
 	}
 	want := []string{"scrape_url", "crawl_site", "extract_structured", "get_cached_selectors",
-		"batch", "map", "summarize", "diff", "brand", "list_extractors", "vertical_scrape", "search"}
+		"batch", "map", "summarize", "diff", "brand", "list_extractors", "vertical_scrape", "search", "research"}
 	if len(got) != len(want) {
 		t.Fatalf("tool count = %d (%v), want %d", len(got), got, len(want))
 	}
