@@ -228,3 +228,35 @@ func (d *DB) SetFactStatus(runID, factID, status, note string) error {
 	return d.execOne("set fact status", fmt.Sprintf("unknown fact %q in run %q", factID, runID),
 		`UPDATE facts SET status=?, note=? WHERE run_id=? AND fact_id=?`, status, note, runID, factID)
 }
+
+// URLHash is the key crawl_state and snapshots store for rawURL (MarkDone
+// and MarkError take it).
+func URLHash(rawURL string) string { return sha256Hex(rawURL) }
+
+// CrawlURL is one crawl_state row: a research run's read ledger reuses the
+// crawl frontier (pending|inflight|done|error; Msg is error_msg).
+type CrawlURL struct{ URL, Status, Msg string }
+
+// CrawlURLs returns a run's crawl_state rows, oldest first; an empty slice
+// for an unknown run. Research resume seeds its visited set from the done
+// and error rows, and the couldn't-read list is the error rows.
+func (d *DB) CrawlURLs(runID string) ([]CrawlURL, error) {
+	rows, err := d.db.Query(`SELECT url, status, COALESCE(error_msg,'') FROM crawl_state
+		WHERE run_id=? ORDER BY discovered_at, rowid`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("store: crawl urls: %w", err)
+	}
+	defer func() { _ = rows.Close() }() //nolint:errcheck // read-only; close error unactionable
+	out := []CrawlURL{}
+	for rows.Next() {
+		var c CrawlURL
+		if err := rows.Scan(&c.URL, &c.Status, &c.Msg); err != nil {
+			return nil, fmt.Errorf("store: crawl urls: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: crawl urls: %w", err)
+	}
+	return out, nil
+}

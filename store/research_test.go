@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -584,5 +585,33 @@ func TestResearch_OpensPreDR0File(t *testing.T) {
 	}
 	if r, err := db.GetRun("pre-dr0-run"); err != nil || r.Command != "research" {
 		t.Errorf("seeded run_history row = %+v, %v; want intact", r, err)
+	}
+}
+
+// TestCrawlURLs: the research read ledger reads crawl_state back in order,
+// with each row's status and error message; URLHash is the stored key.
+func TestCrawlURLs(t *testing.T) {
+	t.Parallel()
+	db := openTempDB(t)
+	urls := []string{"https://a.example/1", "https://b.example/2", "https://c.example/3"}
+	if _, err := db.Enqueue("r", urls, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MarkDone("r", store.URLHash(urls[0])); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MarkError("r", store.URLHash(urls[1]), "login-required: wall"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.CrawlURLs("r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []store.CrawlURL{{urls[0], "done", ""}, {urls[1], "error", "login-required: wall"}, {urls[2], "pending", ""}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("CrawlURLs = %+v, want %+v (MarkDone/MarkError keyed by URLHash must hit the rows)", got, want)
+	}
+	if got, err := db.CrawlURLs("unknown"); err != nil || got == nil || len(got) != 0 {
+		t.Errorf("CrawlURLs(unknown) = %#v (%v), want an empty slice", got, err)
 	}
 }

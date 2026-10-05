@@ -627,3 +627,30 @@ func TestValidateOptions_Proxy(t *testing.T) {
 		}
 	}
 }
+
+// TestRun_JoinsRun: Options.RunID joins the caller's run — no new History
+// row, no finish (the owner's), and the fetch telemetry lands on that row.
+func TestRun_JoinsRun(t *testing.T) {
+	db := openScrapeDB(t)
+	if err := db.BeginRun("owner", "research"); err != nil {
+		t.Fatal(err)
+	}
+	res, err := scrape.Run(context.Background(), scrape.Deps{DB: db, Fetcher: &watchFetcher{body: scrapeHTML}},
+		"https://joined.example.com/p", scrape.Options{RunID: "owner"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.RunID != "owner" {
+		t.Errorf("RunID = %q, want the joined owner", res.RunID)
+	}
+	if runs, err := db.ListRuns(0); err != nil || len(runs) != 1 {
+		t.Fatalf("ListRuns = %d rows (%v), want only the owner's", len(runs), err)
+	}
+	info, err := db.GetRun("owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.FetchPages != 1 || info.Status != "running" {
+		t.Errorf("owner row = fetch_pages %d, status %q; want 1 and still running", info.FetchPages, info.Status)
+	}
+}
