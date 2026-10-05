@@ -233,7 +233,7 @@ func (r *run) read(ctx context.Context, a Angle, u, target string) (int, []task,
 		if ctx.Err() != nil {
 			return 0, nil, ctx.Err()
 		}
-		issue := issueOf(err)
+		issue := issueOf(err) // "<issue>: <detail>" — ListUnreadable reads it back
 		if merr := r.d.DB.MarkError(r.id, store.URLHash(u), issue+": "+err.Error()); merr != nil {
 			return 0, nil, merr
 		}

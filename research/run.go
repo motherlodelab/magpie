@@ -272,6 +272,17 @@ func Run(ctx context.Context, d scrape.Deps, j Job) (rep Report, err error) {
 	return rep, nil
 }
 
+// Check validates j exactly as Run does before it stores or spends
+// anything — the question, Options.Normalized, the writer's and the judge's
+// keys, the named search backends — with no I/O. Surfaces call it to
+// refuse inline before they spawn Run (the desktop's Start and Resume);
+// it is Run's own pre-flight, so the two can't drift. For a resume, pass
+// the stored question and options (Run restores them from research_runs).
+func Check(d scrape.Deps, j Job) error {
+	_, err := prepare(d, j, strings.TrimSpace(j.Question))
+	return err
+}
+
 // prepare validates the job with no I/O — the question, Normalized, the
 // writer's and the judge's keys, the search backends — and builds the
 // run.
@@ -413,14 +424,8 @@ func (r *run) finish(ctx context.Context, rep Report, err error, hasRow, decline
 	if rep.Facts, cerr = r.d.DB.Facts(r.id); cerr != nil {
 		ferr = errors.Join(ferr, cerr)
 	}
-	urls, cerr := r.d.DB.CrawlURLs(r.id)
+	rep.Unreadable, cerr = ListUnreadable(r.d.DB, r.id)
 	ferr = errors.Join(ferr, cerr)
-	for _, c := range urls {
-		if c.Status == "error" {
-			issue, detail, _ := strings.Cut(c.Msg, ": ")
-			rep.Unreadable = append(rep.Unreadable, Unreadable{URL: c.URL, Issue: issue, Detail: detail})
-		}
-	}
 	rep.SpentUSD, cerr = r.d.DB.RunCost(r.id)
 	ferr = errors.Join(ferr, cerr)
 	r.emit(Event{Stage: "done", Detail: status})
@@ -428,6 +433,22 @@ func (r *run) finish(ctx context.Context, rep Report, err error, hasRow, decline
 		rep.Status = "failed"
 	}
 	return rep, errors.Join(err, ferr)
+}
+
+// ListUnreadable is a stored run's couldn't-read list — what
+// Report.Unreadable carries — from its read ledger, so a surface can show
+// it for any run, live or finished. It is the one reader of the ledger's
+// "<issue>: <detail>" error rows (the read path writes them).
+func ListUnreadable(db *store.DB, runID string) ([]Unreadable, error) {
+	urls, err := db.CrawlURLs(runID)
+	var out []Unreadable
+	for _, c := range urls {
+		if c.Status == "error" {
+			issue, detail, _ := strings.Cut(c.Msg, ": ")
+			out = append(out, Unreadable{URL: c.URL, Issue: issue, Detail: detail})
+		}
+	}
+	return out, err
 }
 
 // readCounts is the read ledger's (done, error) totals — pages_ok and

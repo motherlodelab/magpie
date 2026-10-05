@@ -73,6 +73,10 @@ func TestRun_EndToEnd(t *testing.T) {
 	if len(rep.Unreadable) != 1 || rep.Unreadable[0].URL != uLogin || rep.Unreadable[0].Issue != "login-required" {
 		t.Errorf("Unreadable = %+v, want the login wall as login-required", rep.Unreadable)
 	}
+	// A surface reading the stored run later gets the same list.
+	if got, err := research.ListUnreadable(e.db, rep.RunID); err != nil || !slices.Equal(got, rep.Unreadable) {
+		t.Errorf("ListUnreadable = %+v, %v; want %+v", got, err, rep.Unreadable)
+	}
 
 	// The gap jumped angle 1's queue (per-sub order; cross-sub order is free).
 	var a1 []string
@@ -212,7 +216,13 @@ func TestRun_Approve(t *testing.T) {
 	})
 }
 
+// TestRun_Validation also pins Check as Run's own pre-flight: the same
+// error for every refusal, nil for a runnable job, and no I/O either way.
 func TestRun_Validation(t *testing.T) {
+	e := newEnv(t, nil, nil, defaultScript)
+	if err := research.Check(e.deps, e.job(e2eAsk, nil)); err != nil {
+		t.Errorf("Check refused a runnable job: %v", err)
+	}
 	keyless := func(no ...string) func(string) string {
 		return func(p string) string {
 			if slices.Contains(no, p) {
@@ -245,9 +255,13 @@ func TestRun_Validation(t *testing.T) {
 			e := newEnv(t, nil, nil, defaultScript)
 			j, d := e.job(e2eAsk, nil), e.deps
 			tc.mod(&j, &d)
+			cerr := research.Check(d, j)
 			_, err := research.Run(context.Background(), d, j)
 			if err == nil || !strings.Contains(err.Error(), tc.names) || errors.Is(err, scrape.ErrMissingKey) != tc.missing {
 				t.Errorf("err = %v, want one naming %q (ErrMissingKey: %v)", err, tc.names, tc.missing)
+			}
+			if cerr == nil || cerr.Error() != err.Error() || errors.Is(cerr, scrape.ErrMissingKey) != tc.missing {
+				t.Errorf("Check err = %v, want Run's %v", cerr, err)
 			}
 			if runs, _ := e.db.ListRuns(0); len(runs) != 0 { //nolint:errcheck // len asserts
 				t.Errorf("a validation failure stored %d run rows", len(runs))
