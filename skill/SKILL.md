@@ -38,6 +38,7 @@ Extraction costs no tokens unless you ask for it. In order of preference:
 | `magpie extract` | Extract structured data from stdin/file (no fetch) |
 | `magpie summarize <url>` | Summarize one URL in at most N sentences |
 | `magpie search <query>` | Web search via BYOK/no-key SERP provider, optionally scrape the top hits |
+| `magpie research "<question>"` | Deep research: plan, search, read, verify every quote against the stored page, write a report whose citations are footnotes to stored snapshots (`--yes` to skip the plan prompt; capped by `--max-cost`, default $1) |
 | `magpie map <site>` | List sitemap-derived URLs for a site |
 | `magpie diff <url> --against <file>` | Word-level diff of a URL vs a previous markdown snapshot |
 | `magpie brand <url>` | Brand colors, fonts, logo, favicon (zero LLM) |
@@ -62,6 +63,7 @@ browser escalation, proxy, cookies, …).
 | `list_extractors` | List zero-LLM vertical extractors |
 | `vertical_scrape` | Extract one URL with a named vertical (zero LLM) |
 | `search` | Search the web via BYOK/no-key SERP providers, optionally scrape the top hits |
+| `research` | Deep research with verified citations (spends LLM tokens — cap it with `max_cost_usd`; poll a run with `run_id`) |
 
 ## extract_structured schema example
 

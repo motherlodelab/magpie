@@ -724,7 +724,7 @@ func TestProviderHelp_ListsAll(t *testing.T) {
 			}
 		}
 	}
-	for _, cmd := range []string{"scrape", "crawl", "extract", "cache heal"} {
+	for _, cmd := range []string{"scrape", "crawl", "extract", "cache heal", "research"} {
 		u, ok := usages[cmd]
 		if !ok {
 			t.Fatalf("no --provider flag found on %s (have %v)", cmd, usages)

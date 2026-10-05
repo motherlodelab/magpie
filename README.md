@@ -34,6 +34,7 @@ scoped crawling · zero-LLM verticals · 12-tool MCP server · WASM plugins.
   - [Network & security](#network--security)
   - [TLS impersonation](#tls-impersonation)
   - [Search](#search)
+  - [Deep research](#deep-research)
   - [Vertical credentials](#vertical-credentials)
   - [Bot challenges](#bot-challenges)
 - [MCP server](#mcp-server)
@@ -378,6 +379,38 @@ BYOK keys: `MAGPIE_BRAVE_API_KEY`, `MAGPIE_SERPER_API_KEY`,
 `MAGPIE_SERPAPI_API_KEY`, `MAGPIE_EXA_API_KEY`; searxng needs only
 `MAGPIE_SEARXNG_URL`. Missing keys exit 7 with the set-key hint.
 
+#### `magpie research "<question>"` — deep research with verified citations
+
+```bash
+magpie research "When was Go 1.26 released and what changed?"          # plan prompt, then run
+magpie research --yes --effort quick --max-cost 0.10 "…" > report.md   # no prompt, 10¢ cap
+magpie research --yes --json --from 2025-01-01 --prefer-domain go.dev "…"
+```
+
+Plans the question into angles, searches, reads the top hits, extracts
+facts (a claim plus an exact quote), and writes a report. Every quote is
+checked by a Go substring match against the stored page before any model
+judges it; the writer may cite only fact ids, which Go resolves into
+footnotes pointing at the stored snapshot `(url, checked_at)`. URLs the
+writer types are stripped. See [Deep research](#deep-research).
+
+| Flag | Values / default | Action |
+| :-- | :-- | :-- |
+| `--effort` | `quick\|standard\|deep` (default standard) | 1, 3 or 5 sub-researchers; 10, 45 or 100 tool calls |
+| `--provider` / `--model` | provider list (default config) | Writer + extractor model; an empty `--model` is the provider's default |
+| `--judge-provider` / `--judge-model` | default: the writer's | The verifier's judge (falls back to the writer with a warning if it fails) |
+| `--allow-domain` / `--deny-domain` / `--prefer-domain` | domains (repeatable) | Read only / never read / rank up these domains and their subdomains |
+| `--search-provider` | search backends (repeatable) | Default: every one available (duckduckgo, searxng when `MAGPIE_SEARXNG_URL` is set, keyed backends with a key) |
+| `--from` / `--to` | `YYYY-MM-DD` | Drop facts whose page-stated date falls outside |
+| `--yes` | bool | Run the drafted plan without the `Run this plan? [y/N]` prompt (required when stdin is not a terminal) |
+| `--json` | bool | Print the whole report (plan, every fact with its verdict, unreadable pages, spend) |
+
+The cap is the global `--max-cost` (default **$1.00** when unset): research
+stops at 85% of it so the report still gets written. An estimate prints to
+stderr before any spend. **Ctrl-C once** writes from what's verified;
+**twice** stops (exit 1, facts kept in the run). Exit codes: 2 bad flags,
+6 the write itself would pass the cap, 7 missing key.
+
 #### `magpie serve` — serve the pipeline over MCP
 
 ```bash
@@ -392,7 +425,7 @@ magpie serve --transport http --addr 127.0.0.1:8089
 
 `crawl_site` runs synchronously to completion (no background jobs):
 keep MaxPages bounded or use HTTP mode with generous client timeouts.
-See [MCP server](#mcp-server) for the 12-tool list.
+See [MCP server](#mcp-server) for the 13-tool list.
 
 #### `magpie build` — compile a custom binary with extra modules
 
@@ -604,6 +637,22 @@ operator-configured; `MAGPIE_SEARXNG_URL` on 127.0.0.1 is the canonical
 setup). SERP hit URLs always scrape through the strict pipeline. Missing
 keys exit 7 with the set-key hint.
 
+### Deep research
+
+`magpie research` (and the MCP `research` tool) is research you can audit.
+A **fact** is a claim plus an exact quote, pinned to the stored snapshot
+`(url, checked_at)` it was read from. The verifier runs inline, per page:
+a quote not found in the pinned page (case, whitespace, curly quotes,
+dashes and markdown markers folded on both sides) or dated outside
+`--from`/`--to` is dropped in Go, before any model sees it; the survivors
+get one batched judge call (supported, softened to a narrower wording, or
+dropped). A claim the extractor marks pivotal is searched for counter-
+evidence and stands only with support from a second registrable domain
+(contradicted ⇒ contested, both sides shown; single-source ⇒ "Per
+<domain>: …"). The run's reads, facts and verdicts are stored in the
+cache DB (`research_runs`, `facts`, `snapshots`), and History shows one row
+per run.
+
 ### Vertical credentials
 
 Two verticals accept optional credentials via env vars (absent vars = tokenless behavior, unchanged):
@@ -640,7 +689,7 @@ no env block, ever). `--client generic` or `--dry-run` just prints the stanza:
 ```
 
 A ready-made agent skill lives in [`skill/SKILL.md`](skill/SKILL.md) — CLI verbs,
-the 12 tools below, and zero-LLM-first guidance for skill-compatible runners
+the 13 tools below, and zero-LLM-first guidance for skill-compatible runners
 (Claude Code, Cursor, …).
 
 | Tool | Action |
@@ -657,6 +706,7 @@ the 12 tools below, and zero-LLM-first guidance for skill-compatible runners
 | `list_extractors` | List zero-LLM vertical extractors |
 | `vertical_scrape` | Extract one URL with a named vertical (zero LLM) |
 | `search` | Search the web via BYOK/no-key SERP providers, optionally scrape the top hits |
+| `research` | Deep research: plan, search, read, verify every quote against a stored snapshot, write a cited report (`max_cost_usd` cap, default $1; poll with `run_id`; progress notifications) |
 
 HTTP mode: `magpie serve --transport http --addr 127.0.0.1:8089`.
 Details: `magpie serve --help`.
@@ -730,4 +780,4 @@ grant so the project can evolve its license as it grows).
 
 ## Last Updated
 
-This README was last updated on 2026-09-18.
+This README was last updated on 2026-10-05.
