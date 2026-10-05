@@ -400,16 +400,17 @@ writer types are stripped. See [Deep research](#deep-research).
 | `--provider` / `--model` | provider list (default config) | Writer + extractor model; an empty `--model` is the provider's default |
 | `--judge-provider` / `--judge-model` | default: the writer's | The verifier's judge (falls back to the writer with a warning if it fails) |
 | `--allow-domain` / `--deny-domain` / `--prefer-domain` | domains (repeatable) | Read only / never read / rank up these domains and their subdomains |
-| `--search-provider` | search backends (repeatable) | Default: every one available (duckduckgo, searxng when `MAGPIE_SEARXNG_URL` is set, keyed backends with a key) |
+| `--search-provider` | search backends (repeatable) | Default: the keyless ones (duckduckgo, plus searxng when `MAGPIE_SEARXNG_URL` is set). Keyed backends run only when named, so a generic `--api-key` never reaches a SERP vendor |
 | `--from` / `--to` | `YYYY-MM-DD` | Drop facts whose page-stated date falls outside |
 | `--yes` | bool | Run the drafted plan without the `Run this plan? [y/N]` prompt (required when stdin is not a terminal) |
 | `--json` | bool | Print the whole report (plan, every fact with its verdict, unreadable pages, spend) |
 
 The cap is the global `--max-cost` (default **$1.00** when unset): research
 stops at 85% of it so the report still gets written. An estimate prints to
-stderr before any spend. **Ctrl-C once** writes from what's verified;
-**twice** stops (exit 1, facts kept in the run). Exit codes: 2 bad flags,
-6 the write itself would pass the cap, 7 missing key.
+stderr before any spend. Ctrl-C before the plan is approved means "not
+run"; once the run is under way, **Ctrl-C once** writes from what's
+verified and **twice** stops (exit 1, facts kept in the run). Exit codes:
+2 bad flags, 6 the write itself would pass the cap, 7 missing key.
 
 #### `magpie serve` — serve the pipeline over MCP
 
@@ -644,7 +645,9 @@ A **fact** is a claim plus an exact quote, pinned to the stored snapshot
 `(url, checked_at)` it was read from. The verifier runs inline, per page:
 a quote not found in the pinned page (case, whitespace, curly quotes,
 dashes and markdown markers folded on both sides) or dated outside
-`--from`/`--to` is dropped in Go, before any model sees it; the survivors
+`--from`/`--to` is dropped in Go, before any model sees it (a match must
+sit at word and number boundaries: "supported" never matches inside
+"unsupported", nor "Go 1.1" inside "Go 1.18"); the survivors
 get one batched judge call (supported, softened to a narrower wording, or
 dropped). A claim the extractor marks pivotal is searched for counter-
 evidence and stands only with support from a second registrable domain
@@ -706,7 +709,7 @@ the 13 tools below, and zero-LLM-first guidance for skill-compatible runners
 | `list_extractors` | List zero-LLM vertical extractors |
 | `vertical_scrape` | Extract one URL with a named vertical (zero LLM) |
 | `search` | Search the web via BYOK/no-key SERP providers, optionally scrape the top hits |
-| `research` | Deep research: plan, search, read, verify every quote against a stored snapshot, write a cited report (`max_cost_usd` cap, default $1; poll with `run_id`; progress notifications) |
+| `research` | Deep research: plan, search, read, verify every quote against a stored snapshot, write a cited report (`max_cost_usd` cap, at most the server's `--max-cost`, default $1; poll with `run_id` alone — the first progress message carries it) |
 
 HTTP mode: `magpie serve --transport http --addr 127.0.0.1:8089`.
 Details: `magpie serve --help`.

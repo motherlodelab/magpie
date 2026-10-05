@@ -259,6 +259,20 @@ func TestRun_Validation(t *testing.T) {
 	}
 }
 
+// TestBackends: an unnamed fan-out never includes a keyed backend, even
+// when the key resolver answers for it — a generic --api-key would
+// otherwise go to every SERP vendor (review of #60).
+func TestBackends(t *testing.T) {
+	t.Setenv("MAGPIE_SEARXNG_URL", "http://127.0.0.1:1")
+	anyKey := func(string) string { return "sk-llm" }
+	if got, err := research.Backends(research.Options{}, anyKey); err != nil || !slices.Equal(got, []string{"duckduckgo", "searxng"}) {
+		t.Errorf("default fan-out = %v (%v), want the keyless [duckduckgo searxng]", got, err)
+	}
+	if got, err := research.Backends(research.Options{Search: []string{"brave"}}, anyKey); err != nil || !slices.Equal(got, []string{"brave"}) {
+		t.Errorf("named brave = %v (%v), want [brave]", got, err)
+	}
+}
+
 func TestRun_StaleStop(t *testing.T) {
 	pages, serp := map[string]page{}, map[string][]string{}
 	var queries []string

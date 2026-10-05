@@ -292,7 +292,7 @@ func TestSnapshotsSource_Migration(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() }) //nolint:errcheck // test cleanup
 	got, ok, err := db.LatestWatchSnapshot(url)
-	if err != nil || !ok || got.ContentHash != "h0" {
+	if err != nil || !ok || got.ContentHash != "h0" || got.Source != "" {
 		t.Fatalf("LatestWatchSnapshot(legacy) = (%+v, %v, %v), want the legacy row", got, ok, err)
 	}
 	if _, err := db.PutSnapshot(url, "h1", "watch md", true); err != nil {
@@ -312,11 +312,15 @@ func TestRecordSnapshot_Source(t *testing.T) {
 	if _, err := db.RecordSnapshot(url, "read md"); err != nil {
 		t.Fatal(err)
 	}
-	if got, ok, err := db.LatestSnapshot(url); err != nil || !ok || got.Markdown != "read md" {
-		t.Errorf("LatestSnapshot = (%q, %v, %v), want the read row", got.Markdown, ok, err)
+	if got, ok, err := db.LatestSnapshot(url); err != nil || !ok || got.Markdown != "read md" || got.Source != "read" {
+		t.Errorf("LatestSnapshot = (%q %q, %v, %v), want the read row", got.Markdown, got.Source, ok, err)
 	}
-	if got, ok, err := db.LatestWatchSnapshot(url); err != nil || !ok || got.ContentHash != "w1" {
-		t.Errorf("LatestWatchSnapshot = (%q, %v, %v), want the watch row", got.ContentHash, ok, err)
+	if got, ok, err := db.LatestWatchSnapshot(url); err != nil || !ok || got.ContentHash != "w1" || got.Source != "watch" {
+		t.Errorf("LatestWatchSnapshot = (%q %q, %v, %v), want the watch row", got.ContentHash, got.Source, ok, err)
+	}
+	// History says which rows are reads, so watch history can drop them.
+	if all, err := db.ListSnapshots(url, 10); err != nil || len(all) != 2 || all[0].Source != "read" || all[1].Source != "watch" {
+		t.Errorf("ListSnapshots = %+v (%v), want [read watch]", all, err)
 	}
 	if _, ok, err := db.LatestWatchSnapshot("https://example.com/read-only"); err != nil || ok {
 		t.Errorf("LatestWatchSnapshot(unwatched) = (%v, %v), want a miss", ok, err)

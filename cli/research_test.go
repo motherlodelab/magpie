@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -186,5 +187,54 @@ func TestResearchCmd_Happy(t *testing.T) {
 	}
 	if calls := tp.calls(); !strings.Contains(strings.Join(calls, " "), "write") {
 		t.Errorf("model tasks = %v, want a write", calls)
+	}
+}
+
+// TestApprovePlan: a Ctrl-C while the plan was drafted or at the prompt
+// declines it; --yes or "y" runs it (review of #60: the prompt must not
+// turn a Ctrl-C into write-now).
+func TestApprovePlan(t *testing.T) {
+	plan := research.Plan{Brief: "b", Angles: []research.Angle{{Question: "q", Queries: []string{"q"}}}}
+	interrupted := func() chan os.Signal {
+		sig := make(chan os.Signal, 1)
+		sig <- os.Interrupt
+		return sig
+	}
+	stdin := func(t *testing.T, input string) {
+		t.Helper()
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if input != "" {
+			if _, err := io.WriteString(w, input); err != nil {
+				t.Fatal(err)
+			}
+		}
+		old := os.Stdin
+		os.Stdin = r
+		t.Cleanup(func() { os.Stdin = old; _ = w.Close(); _ = r.Close() }) //nolint:errcheck // test cleanup
+	}
+	for _, tc := range []struct {
+		name  string
+		yes   bool
+		input string
+		sig   chan os.Signal
+		run   bool
+	}{
+		{"--yes", true, "", make(chan os.Signal, 1), true},
+		{"Ctrl-C while drafting, --yes", true, "", interrupted(), false},
+		{"y at the prompt", false, "y\n", make(chan os.Signal, 1), true},
+		{"no at the prompt", false, "n\n", make(chan os.Signal, 1), false},
+		{"Ctrl-C at the prompt", false, "", interrupted(), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stdin(t, tc.input)
+			var err error
+			captureOutput(t, func() { _, err = approvePlan(plan, tc.yes, tc.sig) })
+			if ran := err == nil; ran != tc.run || (err != nil && !errors.Is(err, errDeclined)) {
+				t.Errorf("approvePlan = %v, want run %v (else errDeclined)", err, tc.run)
+			}
+		})
 	}
 }

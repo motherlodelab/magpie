@@ -15,7 +15,11 @@ var (
 	QuoteFound = quoteFound
 	InRange    = inRange
 	RegDomain  = regDomain
+	Backends   = backends
 )
+
+// AdmitFinish exposes the judge's admission (write-now doesn't refuse it).
+var AdmitFinish = (*Budget).admitFinish
 
 // Schemas exposes the four structured-call schemas by task name.
 var Schemas = map[string]*extract.Schema{"plan": planSchema, "extract": extractSchema, "judge": judgeSchema, "replan": replanSchema}

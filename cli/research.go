@@ -34,10 +34,14 @@ cites fact ids only; Go checks each quote against the stored page, and
 resolves citations into footnotes (url, checked_at).
 
 The plan is printed first and needs approval (--yes skips the prompt;
-required when stdin is not a terminal). The cap is the global --max-cost
-(default $1.00): research stops at 85% of it so the report still gets
-written. Ctrl-C once writes from what's verified; twice stops (facts are
-kept in the run).`,
+required when stdin is not a terminal; Ctrl-C before the plan is approved
+means "don't run"). The cap is the global --max-cost (default $1.00):
+research stops at 85% of it so the report still gets written. Once the
+run is under way, Ctrl-C once writes from what's verified; twice stops
+(facts are kept in the run).
+
+By default only the keyless search backends run (duckduckgo, plus searxng
+when MAGPIE_SEARXNG_URL is set); name keyed ones with --search-provider.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runResearch(cmd.Context(), args[0], o)
@@ -52,7 +56,7 @@ kept in the run).`,
 	f.StringSliceVar(&o.Allow, "allow-domain", nil, "read only these domains and their subdomains (repeatable)")
 	f.StringSliceVar(&o.Deny, "deny-domain", nil, "never read these domains (repeatable)")
 	f.StringSliceVar(&o.Prefer, "prefer-domain", nil, "rank these domains up (repeatable)")
-	f.StringSliceVar(&o.Search, "search-provider", nil, "search backends (default: every one available; repeatable)")
+	f.StringSliceVar(&o.Search, "search-provider", nil, "search backends (default: duckduckgo, plus searxng when configured; keyed backends must be named; repeatable)")
 	f.StringVar(&o.From, "from", "", "earliest published date to keep, YYYY-MM-DD")
 	f.StringVar(&o.To, "to", "", "latest published date to keep, YYYY-MM-DD")
 	f.BoolVar(&o.Yes, "yes", false, "run the drafted plan without asking")
@@ -121,6 +125,9 @@ func runResearch(ctx context.Context, question string, o researchOptions) error 
 	}
 	defer closeDB(db)
 
+	// Ctrl-C before the plan is approved means "don't run" (approvePlan
+	// reads it); once the run is approved, the watcher owns it: the first
+	// writes from what's verified, the second stops.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	ctl := &research.Control{}
@@ -131,11 +138,16 @@ func runResearch(ctx context.Context, question string, o researchOptions) error 
 	sig := make(chan os.Signal, 2)
 	signal.Notify(sig, os.Interrupt)
 	defer signal.Stop(sig)
-	wg.Go(func() { interrupts(sig, done, ctl, cancel) })
 
 	rep, err := research.Run(ctx, scrapeDeps(db, cfg), research.Job{
 		Question: question, Options: opts, Control: ctl, OnEvent: printEvent,
-		Approve: func(p research.Plan) (research.Plan, error) { return approvePlan(p, o.Yes) },
+		Approve: func(p research.Plan) (research.Plan, error) {
+			p, err := approvePlan(p, o.Yes, sig)
+			if err == nil {
+				wg.Go(func() { interrupts(sig, done, ctl, cancel) })
+			}
+			return p, err
+		},
 	})
 	switch {
 	case errors.Is(err, errDeclined):
@@ -179,8 +191,9 @@ func interrupts(sig <-chan os.Signal, done <-chan struct{}, ctl *research.Contro
 	}
 }
 
-// approvePlan prints the plan and asks, unless --yes.
-func approvePlan(p research.Plan, yes bool) (research.Plan, error) {
+// approvePlan prints the plan and asks, unless --yes. A Ctrl-C while the
+// plan was drafted, or at the prompt, declines it.
+func approvePlan(p research.Plan, yes bool, sig <-chan os.Signal) (research.Plan, error) {
 	fmt.Fprintf(os.Stderr, "plan: %s\n", p.Brief)
 	for i, a := range p.Angles {
 		fmt.Fprintf(os.Stderr, "  %d. %s\n", i+1, a.Question)
@@ -188,14 +201,33 @@ func approvePlan(p research.Plan, yes bool) (research.Plan, error) {
 			fmt.Fprintf(os.Stderr, "       - %s\n", q)
 		}
 	}
+	select {
+	case <-sig:
+		return research.Plan{}, errDeclined
+	default:
+	}
 	if yes {
 		return p, nil
 	}
 	fmt.Fprint(os.Stderr, "Run this plan? [y/N] ")
-	var ans string
-	_, _ = fmt.Scanln(&ans) //nolint:errcheck // an empty or unreadable answer is a no
-	if a := strings.ToLower(strings.TrimSpace(ans)); a == "y" || a == "yes" {
-		return p, nil
+	ans := make(chan string, 1)
+	// ponytail: after a Ctrl-C at the prompt this reader stays blocked on
+	// stdin until the process exits (moments later) — a blocking terminal
+	// read can't be interrupted portably.
+	in := os.Stdin // read here: the goroutine may outlive a swap
+	go func() {
+		var a string
+		_, _ = fmt.Fscanln(in, &a) //nolint:errcheck // an empty or unreadable answer is a no
+		ans <- a
+	}()
+	select {
+	case <-sig:
+		fmt.Fprintln(os.Stderr)
+		return research.Plan{}, errDeclined
+	case a := <-ans:
+		if a = strings.ToLower(strings.TrimSpace(a)); a == "y" || a == "yes" {
+			return p, nil
+		}
 	}
 	return research.Plan{}, errDeclined
 }

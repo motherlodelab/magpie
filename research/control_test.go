@@ -29,7 +29,28 @@ func TestRun_WriteNow(t *testing.T) {
 	if len(e.llm.recorded("write")) != 1 {
 		t.Error("write-now must still write the report")
 	}
+	// A page already extracted when Write now landed still gets judged.
+	for _, f := range rep.Facts {
+		if f.Status == "unverified" {
+			t.Errorf("fact %s at %s left unverified by write-now", f.FactID, f.URL)
+		}
+	}
 	e.settle(t)
+}
+
+// TestRun_ControlBeforeStart: Control set before Run waits for the run's
+// row: the plan still runs, the steer is persisted at the first boundary.
+func TestRun_ControlBeforeStart(t *testing.T) {
+	e := newEnv(t, e2ePages(t), e2eSerp, defaultScript)
+	ctl := &research.Control{}
+	ctl.Steer("only 2025 data")
+	rep, err := research.Run(context.Background(), e.deps, e2eJob(e, func(j *research.Job) { j.Control = ctl }))
+	if err != nil || rep.Status != "done" {
+		t.Fatalf("Run = %q, %v; want done", rep.Status, err)
+	}
+	if rr, _ := e.db.GetResearchRun(rep.RunID); rr.Steer != "only 2025 data" { //nolint:errcheck // asserted
+		t.Errorf("steer = %q, want the pre-start steer persisted", rr.Steer)
+	}
 }
 
 func TestRun_BudgetStop(t *testing.T) {
@@ -106,7 +127,10 @@ func TestRun_Resume(t *testing.T) {
 	}
 	a := factBy(t, first.Facts, uAlpha, "rose 12%")
 
-	rep, err := research.Run(context.Background(), e.deps, e2eJob(e, func(j *research.Job) { j.RunID = first.RunID }))
+	rep, err := research.Run(context.Background(), e.deps, e2eJob(e, func(j *research.Job) {
+		j.RunID = first.RunID
+		j.Options.Provider, j.Options.Model = "anthropic", "claude-x" // ignored: the stored options win
+	}))
 	if err != nil || rep.Status != "done" {
 		t.Fatalf("resume = %q, %v; want done", rep.Status, err)
 	}
@@ -118,6 +142,12 @@ func TestRun_Resume(t *testing.T) {
 	}
 	if again := factBy(t, rep.Facts, uAlpha, "rose 12%"); again.FactID != a.FactID {
 		t.Errorf("A is %s after resume, was %s", again.FactID, a.FactID)
+	}
+	// The stored options win: the caller's other provider is ignored.
+	for _, c := range e.llm.calls {
+		if c.Provider != "openai" {
+			t.Errorf("a %s call ran on %s/%s, want the stored openai pair", c.Task, c.Provider, c.Model)
+		}
 	}
 	e.settle(t)
 }

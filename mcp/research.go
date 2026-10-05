@@ -8,6 +8,7 @@ import (
 
 	"github.com/motherlodelab/magpie/config"
 	"github.com/motherlodelab/magpie/research"
+	"github.com/motherlodelab/magpie/store"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -18,7 +19,7 @@ import (
 type ResearchIn struct {
 	Question        string     `json:"question,omitempty" jsonschema:"the research question (required unless run_id polls a previous run)"`
 	Effort          string     `json:"effort,omitempty" jsonschema:"quick, standard (default) or deep"`
-	MaxCostUSD      float64    `json:"max_cost_usd,omitempty" jsonschema:"hard USD cap for this run (default: the server's max cost, else 1.00)"`
+	MaxCostUSD      float64    `json:"max_cost_usd,omitempty" jsonschema:"hard USD cap for this run, at most the server's max cost (default: the server's max cost, else 1.00)"`
 	Provider        string     `json:"provider,omitempty" jsonschema:"LLM provider (default server provider)"`
 	Model           string     `json:"model,omitempty" jsonschema:"model (default server model)"`
 	JudgeProvider   string     `json:"judge_provider,omitempty" jsonschema:"provider for the verifier's judge (default: same as provider)"`
@@ -28,8 +29,8 @@ type ResearchIn struct {
 	PreferDomains   StringList `json:"prefer_domains,omitempty" jsonschema:"rank these domains up"`
 	From            string     `json:"from,omitempty" jsonschema:"earliest published date to keep, YYYY-MM-DD"`
 	To              string     `json:"to,omitempty" jsonschema:"latest published date to keep, YYYY-MM-DD"`
-	SearchProviders StringList `json:"search_providers,omitempty" jsonschema:"search backends (default: every one available)"`
-	RunID           string     `json:"run_id,omitempty" jsonschema:"poll a previous run instead of starting one"`
+	SearchProviders StringList `json:"search_providers,omitempty" jsonschema:"search backends (default: duckduckgo, plus searxng when configured; keyed backends must be named)"`
+	RunID           string     `json:"run_id,omitempty" jsonschema:"poll a previous run instead of starting one (send it without question); a new run's id arrives in its first progress message"`
 }
 
 // ResearchOut is the research tool output.
@@ -65,10 +66,13 @@ type UnreadableOut struct {
 func handleResearch(d Deps) func(context.Context, *sdk.CallToolRequest, ResearchIn) (*sdk.CallToolResult, ResearchOut, error) {
 	return func(ctx context.Context, req *sdk.CallToolRequest, in ResearchIn) (*sdk.CallToolResult, ResearchOut, error) {
 		question := strings.TrimSpace(in.Question)
-		if in.RunID != "" && question == "" {
+		switch {
+		case in.RunID != "" && question != "":
+			// A client echoing inputs must not start a second paid run.
+			return nil, ResearchOut{}, fmt.Errorf("mcp: research: run_id polls a previous run: drop question (or drop run_id to start a new run)")
+		case in.RunID != "":
 			return pollResearch(d, in.RunID)
-		}
-		if question == "" {
+		case question == "":
 			return nil, ResearchOut{}, fmt.Errorf("mcp: research: question: required (or run_id to poll a previous run)")
 		}
 		from, err := researchDay("from", in.From)
@@ -86,13 +90,17 @@ func handleResearch(d Deps) func(context.Context, *sdk.CallToolRequest, Research
 		if in.Model != "" {
 			model = in.Model
 		}
+		// The server's cap is a ceiling a client may lower, never raise.
 		capUSD := in.MaxCostUSD
-		if capUSD <= 0 {
+		if d.MaxCost > 0 && (capUSD <= 0 || capUSD > d.MaxCost) {
 			capUSD = d.MaxCost
 		}
 		if capUSD <= 0 {
 			capUSD = research.DefaultMaxCostUSD
 		}
+		// Minted here, not in Run, so the first progress message can carry
+		// it: a client that times out still has a run to poll.
+		runID := store.NewRunID()
 		// No human in the loop: the plan is auto-approved and goes out as a
 		// progress message like every other event.
 		var onEvent func(research.Event)
@@ -104,13 +112,16 @@ func handleResearch(d Deps) func(context.Context, *sdk.CallToolRequest, Research
 				if msg == "" {
 					msg = ev.URL
 				}
+				if seq == 1 {
+					msg = "run_id " + runID + " · " + msg
+				}
 				_ = req.Session.NotifyProgress(ctx, &sdk.ProgressNotificationParams{ //nolint:errcheck // progress is best-effort; a failed notify must not fail the run
 					ProgressToken: token, Progress: float64(seq), Message: ev.Stage + ": " + msg,
 				})
 			}
 		}
 		rep, err := research.Run(ctx, d.ScrapeDeps, research.Job{
-			Question: question, OnEvent: onEvent,
+			RunID: runID, Question: question, OnEvent: onEvent,
 			Options: research.Options{
 				Provider: provider, Model: model, JudgeProvider: in.JudgeProvider, JudgeModel: in.JudgeModel,
 				MaxCostUSD: capUSD, Effort: in.Effort, Search: []string(in.SearchProviders),

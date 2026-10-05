@@ -6,41 +6,126 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/net/publicsuffix"
 )
 
 var (
-	mdImage = regexp.MustCompile(`!\[([^\]]*)\]\([^)]*\)`)
-	mdLink  = regexp.MustCompile(`\[([^\]]*)\]\([^)]*\)`)
-	// folds maps what models change when they copy a quote. Markdown
-	// emphasis, code, heading, blockquote and table markers and the
-	// converter's backslash escapes are deleted outright.
+	// A link target may hold one level of balanced parentheses
+	// (wikipedia's /wiki/Go_(programming_language)) and a "title".
+	mdImage = regexp.MustCompile(`!\[([^\]]*)\]\((?:[^()\s]|\([^()\s]*\))*(?:\s+"[^"]*")?\)`)
+	mdLink  = regexp.MustCompile(`\[([^\]]*)\]\((?:[^()\s]|\([^()\s]*\))*(?:\s+"[^"]*")?\)`)
+	// Block markers only where they are markers: a heading's #s and a
+	// blockquote's >s at a line's start, a table row's pipes. Inline,
+	// ">100 ms" and "#1" keep their meaning.
+	mdBlock  = regexp.MustCompile(`(?m)^[ \t]*(?:(?:>[ \t]?)+|#{1,6}[ \t]+)`)
+	mdTable  = regexp.MustCompile(`(?m)^[ \t]*\|.*$`)
+	mdEscape = regexp.MustCompile("\\\\([!-/:-@\\[-`{-~])") // \* → * (CommonMark escapes)
+	// folds maps the characters models swap when they copy a quote.
 	folds = strings.NewReplacer(
 		"“", `"`, "”", `"`, "„", `"`, "‘", "'", "’", "'",
-		"–", "-", "—", "-", "−", "-", "…", "...", " ", " ",
-		"*", "", "_", "", "`", "", "#", "", ">", "", "|", "", `\`, "",
+		"–", "-", "—", "-", "−", "-", "…", "...", "\u00a0", " ", "`", "",
 	)
 )
 
 // normText folds what models change when they copy a quote — case,
-// whitespace runs, curly quotes, dashes, ellipses, markdown emphasis and
-// heading/quote/table markers and escapes, [link](target) → link — and
-// nothing else. Applied to both sides, so a fold can loosen a match but
-// never fake one.
+// whitespace runs, curly quotes, dashes, ellipses, code ticks, markdown
+// escapes, emphasis delimiters, heading/blockquote/table markers,
+// [link](target) → link — and nothing that carries meaning: an inline > or
+// #, a spaced * (30 * 2) and an intraword _ (snake_case) are kept. Applied
+// to both sides, so a fold can loosen a match but never fake one.
 func normText(s string) string {
-	s = mdImage.ReplaceAllString(s, "$1")
-	s = mdLink.ReplaceAllString(s, "$1")
+	s = unlink(mdImage, s)
+	s = unlink(mdLink, s)
+	s = mdBlock.ReplaceAllString(s, "")
+	s = mdTable.ReplaceAllStringFunc(s, func(row string) string { return strings.ReplaceAll(row, "|", " ") })
+	s = mdEscape.ReplaceAllString(s, "$1")
+	s = stripEmphasis(s)
 	return strings.Join(strings.Fields(folds.Replace(strings.ToLower(s))), " ")
 }
 
+// unlink replaces each link (or image) with its text, and keeps a link's
+// edges as word boundaries: html-to-markdown glues adjacent elements
+// ("[#67627](u)cmd/compile" — an issue link, then the title), which would
+// otherwise make "cmd/compile" look like the end of a longer word.
+func unlink(re *regexp.Regexp, s string) string {
+	ms := re.FindAllStringSubmatchIndex(s, -1)
+	if ms == nil {
+		return s
+	}
+	var b strings.Builder
+	last := 0
+	for _, m := range ms {
+		text := s[m[2]:m[3]]
+		b.WriteString(s[last:m[0]])
+		first, _ := utf8.DecodeRuneInString(text)
+		if before, _ := utf8.DecodeLastRuneInString(s[:m[0]]); alnum(before) && alnum(first) {
+			b.WriteByte(' ')
+		}
+		b.WriteString(text)
+		end, _ := utf8.DecodeLastRuneInString(text)
+		if after, _ := utf8.DecodeRuneInString(s[m[1]:]); alnum(after) && alnum(end) {
+			b.WriteByte(' ')
+		}
+		last = m[1]
+	}
+	b.WriteString(s[last:])
+	return b.String()
+}
+
+// stripEmphasis deletes the runs of * and _ that CommonMark's flanking
+// rules let open or close emphasis; a run that can't (spaced on both
+// sides, or an underscore inside a word) is text and stays.
+func stripEmphasis(s string) string {
+	if !strings.ContainsAny(s, "*_") {
+		return s
+	}
+	rs := []rune(s)
+	var b strings.Builder
+	for i := 0; i < len(rs); {
+		c := rs[i]
+		if c != '*' && c != '_' {
+			b.WriteRune(c)
+			i++
+			continue
+		}
+		j := i
+		for j < len(rs) && rs[j] == c {
+			j++
+		}
+		prev, next := ' ', ' ' // a line's edge counts as whitespace
+		if i > 0 {
+			prev = rs[i-1]
+		}
+		if j < len(rs) {
+			next = rs[j]
+		}
+		left := !unicode.IsSpace(next) && (!isPunct(next) || unicode.IsSpace(prev) || isPunct(prev))
+		right := !unicode.IsSpace(prev) && (!isPunct(prev) || unicode.IsSpace(next) || isPunct(next))
+		delim := left || right
+		if c == '_' {
+			delim = (left && (!right || isPunct(prev))) || (right && (!left || isPunct(next)))
+		}
+		if !delim {
+			b.WriteString(string(rs[i:j]))
+		}
+		i = j
+	}
+	return b.String()
+}
+
+func isPunct(r rune) bool { return unicode.IsPunct(r) || unicode.IsSymbol(r) }
+
 // quoteFound: minQuoteRunes ≤ len(q) ≤ maxQuoteRunes and normText(markdown)
-// contains q, where q is normText(quote) with its edge punctuation and
-// wrapping quote marks trimmed. Models end a mid-sentence fragment with a
-// period ("…platforms." where the page goes on ", making it…") or wrap it
-// in quotes; the trim moves where a quote may end, never what it says —
-// every remaining word must still be on the page, in order.
+// holds q at word and number boundaries, where q is normText(quote) with
+// its edge punctuation and wrapping quote marks trimmed. Models end a
+// mid-sentence fragment with a period ("…platforms." where the page goes
+// on ", making it…") or wrap it in quotes; the trim moves where a quote may
+// end, never what it says. The boundaries keep a quote from dropping a
+// prefix ("supported" inside "unsupported") or cutting a number short
+// ("Go 1.1" inside "Go 1.18", "$1,000" inside "$1,000,000").
 func quoteFound(markdown, quote string) bool { return quoteIn(normText(markdown), quote) }
 
 // quoteIn is quoteFound against an already-folded page.
@@ -49,8 +134,43 @@ func quoteIn(page, quote string) bool {
 	if n := utf8.RuneCountInString(q); n < minQuoteRunes || n > maxQuoteRunes {
 		return false
 	}
-	return strings.Contains(page, q)
+	for off := 0; off < len(page); {
+		k := strings.Index(page[off:], q)
+		if k < 0 {
+			return false
+		}
+		if i := off + k; bounded(page, i, i+len(q)) {
+			return true
+		}
+		off += k + 1
+	}
+	return false
 }
+
+// bounded: page[i:j] neither starts nor ends inside a word or a number
+// (a digit run continued by "." or "," and another digit is one number).
+func bounded(page string, i, j int) bool {
+	first, _ := utf8.DecodeRuneInString(page[i:j])
+	last, _ := utf8.DecodeLastRuneInString(page[i:j])
+	before, bn := utf8.DecodeLastRuneInString(page[:i])
+	after, an := utf8.DecodeRuneInString(page[j:])
+	if alnum(first) && alnum(before) || alnum(last) && alnum(after) {
+		return false
+	}
+	if unicode.IsDigit(first) && (before == '.' || before == ',') {
+		if r, _ := utf8.DecodeLastRuneInString(page[:i-bn]); unicode.IsDigit(r) {
+			return false
+		}
+	}
+	if unicode.IsDigit(last) && (after == '.' || after == ',') {
+		if r, _ := utf8.DecodeRuneInString(page[j+an:]); unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func alnum(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
 
 // inRange: an unknown or unparseable published date is kept (ponytail:
 // most pages state none, and a missing date proves nothing); otherwise its

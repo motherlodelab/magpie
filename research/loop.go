@@ -92,11 +92,19 @@ func (r *run) boundary(ctx context.Context) error {
 }
 
 // syncControl applies the operator's Control: write-now goes to the
-// budget (every later admission refuses), a new steer is persisted and
-// logged. Cheap, so every read checks it too: Write now acts within one
-// page (the page in flight still gets extracted and judged), not one search.
+// budget (every later admission refuses, except a judge finishing a page
+// already extracted), a new steer is persisted and logged. Cheap, so every
+// read and LLM call checks it: Write now acts within one call.
+// Before the research_runs row exists (the scope call) Control waits:
+// there is no row to steer and no research to stop yet.
 func (r *run) syncControl() error {
 	if r.ctl == nil {
+		return nil
+	}
+	r.mu.Lock()
+	live := r.live
+	r.mu.Unlock()
+	if !live {
 		return nil
 	}
 	writeNow, s := r.ctl.read()
@@ -285,7 +293,11 @@ func (r *run) extractPage(ctx context.Context, a Angle, u, title, md string, pin
 		if len(facts) == maxFactsPerPage {
 			break
 		}
-		if oneLine(f.Claim) == "" || strings.TrimSpace(f.Quote) == "" {
+		// A quote is evidence text, never markup: a link or image the page
+		// (or an injection) put in it would pass the folded check and then
+		// render wherever the ledger is shown.
+		quote := strings.TrimSpace(unlinked(f.Quote))
+		if oneLine(f.Claim) == "" || quote == "" {
 			continue // the store refuses them, and nothing could verify them
 		}
 		cq := ""
@@ -297,7 +309,7 @@ func (r *run) extractPage(ctx context.Context, a Angle, u, title, md string, pin
 		if math.IsNaN(conf) {
 			conf = 0
 		}
-		facts = append(facts, Fact{Claim: oneLine(f.Claim), Quote: f.Quote, URL: u, CheckedAt: pin,
+		facts = append(facts, Fact{Claim: oneLine(f.Claim), Quote: quote, URL: u, CheckedAt: pin,
 			Published: strings.TrimSpace(f.Published), Confidence: min(max(conf, 0), 1)})
 		counter = append(counter, cq)
 	}
@@ -308,6 +320,9 @@ func (r *run) extractPage(ctx context.Context, a Angle, u, title, md string, pin
 	for i := range facts {
 		facts[i].FactID = ids[i]
 	}
+	r.mu.Lock()
+	r.facts += len(facts) // stored: counted whatever the verdicts
+	r.mu.Unlock()
 	usable, err := r.verifySource(ctx, u, pin, facts)
 	if err != nil {
 		if !soft(ctx, err) {
@@ -319,7 +334,6 @@ func (r *run) extractPage(ctx context.Context, a Angle, u, title, md string, pin
 	domain := regDomain(hostOf(u))
 	var front []task
 	r.mu.Lock()
-	r.facts += len(facts)
 	r.usable += len(usable)
 	var usableIDs []string
 	for i, f := range facts {

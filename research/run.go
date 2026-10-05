@@ -148,6 +148,8 @@ type run struct {
 	findings       []string
 	facts, usable  int
 	steer          string
+	live           bool // the research_runs row exists: Control applies
+	reads          int  // ledger rows before a resume (counted as tool calls)
 	judgeP, judgeM string
 	errStreak      int
 	extractors     map[exKey]extract.Extractor
@@ -163,38 +165,60 @@ type run struct {
 // rows: done/finished on success, stopped/interrupted when ctx ends it
 // (ctx.Err() is returned), failed/error otherwise (a refused write wraps
 // crawl.ErrCostCeiling; facts are kept, so a resume can write later). A
-// Job.RunID naming an unfinished research run resumes it: the stored plan
-// (no scope call), the ledger so far, no page re-read, spend cumulative.
-// ponytail: issued queries, replanned angles and pivot bookkeeping aren't
-// persisted — a resume may re-issue a query, and a pivotal fact keeps the
-// provisional single-source verdict stored when it was marked.
+// Job.RunID naming an unfinished research run resumes it: the stored
+// question, plan (no scope call) and options — only a higher MaxCostUSD
+// from the caller wins, so a run its cap stopped can be resumed to write —
+// the ledger so far, no page re-read, spend and reads cumulative.
+// ponytail: issued queries, searches, replanned angles and pivot
+// bookkeeping aren't persisted — a resume may re-issue a query (and its
+// searches aren't counted against MaxToolCalls), and a pivotal fact keeps
+// the provisional single-source verdict stored when it was marked.
 func Run(ctx context.Context, d scrape.Deps, j Job) (rep Report, err error) {
+	if d.DB == nil {
+		return Report{}, fmt.Errorf("research: nil DB")
+	}
+	var rr store.ResearchRun
+	resumed := false
+	if j.RunID != "" {
+		if got, gerr := d.DB.GetResearchRun(j.RunID); gerr == nil {
+			if got.Status == "done" {
+				return Report{}, fmt.Errorf("research: run %s is done; a follow-up is a new run", j.RunID)
+			}
+			if j, err = resumeJob(j, got); err != nil {
+				return Report{}, err
+			}
+			rr, resumed = got, true
+		}
+	}
 	question := strings.TrimSpace(j.Question)
 	r, err := prepare(d, j, question)
 	if err != nil {
 		return Report{}, err
 	}
 	rep.RunID = r.id
-
-	rr, rerr := d.DB.GetResearchRun(r.id)
-	resumed := rerr == nil && j.RunID != ""
 	if resumed {
-		if rr.Status == "done" {
-			return Report{}, fmt.Errorf("research: run %s is done; a follow-up is a new run", r.id)
-		}
-		question = rr.Question
-		if err := r.resume(rr); err != nil {
+		if err := r.load(rr); err != nil {
 			return Report{}, err
 		}
 	} else if err := d.DB.BeginRun(r.id, "research"); err != nil {
 		return Report{}, err
 	}
 	r.budget = NewBudget(d.DB, r.id, r.o)
+	r.budget.tools = r.reads // a resume spends the reads it already made
 
-	hasRow, declined := resumed, false
+	// From here every exit goes through finish; hasRow says whether the
+	// research_runs row is in flight (finish then ends it too).
+	hasRow, declined := false, false
 	defer func() { rep, err = r.finish(ctx, rep, err, hasRow, declined) }()
 
-	if !resumed {
+	if resumed {
+		if err = d.DB.ResumeRun(r.id); err != nil {
+			return rep, err
+		}
+		if err = d.DB.SetResearchState(r.id, "running", rr.Steer); err != nil {
+			return rep, err
+		}
+	} else {
 		if r.plan, err = r.scope(ctx, question, j.Approve); err != nil {
 			var de declinedError
 			if declined = errors.As(err, &de); declined {
@@ -210,8 +234,11 @@ func Run(ctx context.Context, d scrape.Deps, j Job) (rep Report, err error) {
 		if err = d.DB.PutResearchRun(store.ResearchRun{RunID: r.id, Question: question, Plan: string(planJSON), Options: string(optsJSON)}); err != nil {
 			return rep, err
 		}
-		hasRow = true
 	}
+	hasRow = true
+	r.mu.Lock()
+	r.live = true
+	r.mu.Unlock()
 	r.emit(Event{Stage: "plan", Detail: planLine(r.plan, resumed)})
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -249,9 +276,6 @@ func Run(ctx context.Context, d scrape.Deps, j Job) (rep Report, err error) {
 // writer's and the judge's keys, the search backends — and builds the
 // run.
 func prepare(d scrape.Deps, j Job, question string) (*run, error) {
-	if d.DB == nil {
-		return nil, fmt.Errorf("research: nil DB")
-	}
 	if question == "" {
 		return nil, fmt.Errorf("research: question: required")
 	}
@@ -271,12 +295,27 @@ func prepare(d scrape.Deps, j Job, question string) (*run, error) {
 			return nil, fmt.Errorf("research: provider %s: %w", p, scrape.ErrMissingKey)
 		}
 	}
-	avail := scrape.SearchProvidersFor(r.key)
-	r.backends = avail
-	if len(o.Search) > 0 {
-		r.backends = o.Search
+	if r.backends, err = backends(o, r.key); err != nil {
+		return nil, err
 	}
-	for _, b := range r.backends {
+	if r.id == "" {
+		r.id = store.NewRunID()
+	}
+	return r, nil
+}
+
+// backends is the run's search fan-out. Unnamed, it is the keyless
+// backends only (duckduckgo, and searxng when MAGPIE_SEARXNG_URL is set):
+// a keyed backend must be asked for, because a key resolver may fall back
+// to a generic key (--api-key, MAGPIE_API_KEY) that is the LLM's, and a
+// default fan-out would send it to every SERP vendor. Named backends must
+// be usable: a keyed one needs its key, searxng its URL.
+func backends(o Options, keyFor func(string) string) ([]string, error) {
+	if len(o.Search) == 0 {
+		return scrape.SearchProvidersFor(nil), nil
+	}
+	avail := scrape.SearchProvidersFor(keyFor)
+	for _, b := range o.Search {
 		switch {
 		case slices.Contains(avail, b):
 		case b == "searxng":
@@ -285,47 +324,7 @@ func prepare(d scrape.Deps, j Job, question string) (*run, error) {
 			return nil, fmt.Errorf("research: search provider %s: %w", b, scrape.ErrMissingKey)
 		}
 	}
-	if r.id == "" {
-		r.id = store.NewRunID()
-	}
-	return r, nil
-}
-
-// resume reopens an unfinished run: run_history back to running, the
-// stored steer and plan, and the visited set from the read ledger's done
-// and error rows (a crashed pending row is simply read again).
-func (r *run) resume(rr store.ResearchRun) error {
-	if err := json.Unmarshal([]byte(rr.Plan), &r.plan); err != nil {
-		return fmt.Errorf("research: resume %s: plan: %w", r.id, err)
-	}
-	if err := r.d.DB.ResumeRun(r.id); err != nil {
-		return err
-	}
-	if err := r.d.DB.SetResearchState(r.id, "running", rr.Steer); err != nil {
-		return err
-	}
-	r.steer = rr.Steer
-	urls, err := r.d.DB.CrawlURLs(r.id)
-	if err != nil {
-		return err
-	}
-	for _, c := range urls {
-		if c.Status == "done" || c.Status == "error" {
-			r.visited[c.URL] = true
-		}
-	}
-	facts, err := r.d.DB.Facts(r.id)
-	if err != nil {
-		return err
-	}
-	for _, f := range facts {
-		r.facts++
-		if slices.Contains(usableStatus, f.Status) {
-			r.usable++
-			r.findings = append(r.findings, finding(f.FactID, f.Claim, f.URL))
-		}
-	}
-	return nil
+	return o.Search, nil
 }
 
 // declinedError marks an Approve error: the run row finishes interrupted

@@ -31,7 +31,7 @@ type Options struct {
 	Effort         string       `json:"effort"`                   // quick|standard|deep; "" = standard
 	Sources        SourcePolicy `json:"sources"`
 	SessionDomains []string     `json:"session_domains,omitempty"` // opaque to core: the desktop resolves sessions (DR6)
-	Search         []string     `json:"search,omitempty"`          // search backends; empty = every one available (scrape.SearchProvidersFor)
+	Search         []string     `json:"search,omitempty"`          // search backends; empty = the keyless ones (duckduckgo, searxng when configured) — keyed backends must be named
 }
 
 // SourcePolicy says where a run may read. Domains are bare host suffixes

@@ -101,27 +101,44 @@ func (r *run) write(ctx context.Context, question string) (md string, cited []st
 }
 
 var (
-	// writerURL is anything a renderer would link: a scheme URL (with an
-	// autolink's brackets) or a GFM www. autolink.
-	writerURL = regexp.MustCompile(`<?(?:https?://|www\.)[^\s>]+>?`)
-	citation  = regexp.MustCompile(`\[(f\d+(?:\s*,\s*f\d+)*)\]`)
+	// What a markdown renderer turns into a link or a footnote, besides
+	// [text](target) and images: a raw HTML tag (an <a href>, or an
+	// autolink <scheme:…> in any case), a bare URL (any case) or GFM www.
+	// autolink, a reference or footnote definition line, a footnote ref.
+	htmlTag  = regexp.MustCompile(`</?[A-Za-z][A-Za-z0-9+.-]*(?:[:\s][^>]*)?/?>`)
+	bareURL  = regexp.MustCompile(`(?i)\b(?:[a-z][a-z0-9+.-]*://|www\.)\S+`)
+	linkDef  = regexp.MustCompile(`(?m)^[ \t]*\[[^\]]+\]:.*$`)
+	footRef  = regexp.MustCompile(`\[\^[^\]]*\]`)
+	citation = regexp.MustCompile(`\[(f\d+(?:\s*,\s*f\d+)*)\]`)
 )
 
-// Resolve turns the writer's text into the final report: every markdown
-// link becomes its text and every bare URL is removed (the report's only
-// URLs are its Sources); each [fN] / [fN, fM] naming a usable fact becomes
+// unlinked strips everything a renderer would make a link or a footnote
+// of: markdown links and images become their text; HTML tags, autolinks,
+// bare URLs, reference and footnote definitions and footnote refs go. A
+// definition-shaped line goes whatever its label: "[f3]: …" would become a
+// "[^1]: …" footnote once Resolve numbers the citation.
+func unlinked(s string) string {
+	s = mdImage.ReplaceAllString(s, "$1")
+	s = mdLink.ReplaceAllString(s, "$1")
+	s = htmlTag.ReplaceAllString(s, "")
+	s = bareURL.ReplaceAllString(s, "")
+	s = linkDef.ReplaceAllString(s, "")
+	return footRef.ReplaceAllString(s, "")
+}
+
+// Resolve turns the writer's text into the final report: every link the
+// writer typed is unlinked (the report's only URLs are its Sources, and its
+// only footnotes Resolve's own); each [fN] / [fN, fM] naming a usable fact becomes
 // a footnote numbered in first-citation order ([^1]); unknown or unusable
 // IDs are removed and returned in dropped. Sources = one footnote per cited
-// fact: [^n]: <url> — "<quote>" (checked <checked_at RFC3339Nano>).
+// fact: [^n]: <url> — "<quote, unlinked>" (checked <checked_at RFC3339Nano>).
 // Pure: same text and facts, same output.
 func Resolve(text string, usable []Fact) (markdown string, cited, dropped []string) {
 	byID := make(map[string]Fact, len(usable))
 	for _, f := range usable {
 		byID[f.FactID] = f
 	}
-	text = mdImage.ReplaceAllString(text, "$1")
-	text = mdLink.ReplaceAllString(text, "$1")
-	text = writerURL.ReplaceAllString(text, "")
+	text = unlinked(text)
 	num := map[string]int{}
 	md := citation.ReplaceAllStringFunc(text, func(m string) string {
 		var b strings.Builder
@@ -149,7 +166,7 @@ func Resolve(text string, usable []Fact) (markdown string, cited, dropped []stri
 	b.WriteString("\n\n## Sources\n\n")
 	for _, id := range cited {
 		f := byID[id]
-		fmt.Fprintf(&b, "[^%d]: %s — \"%s\" (checked %s)\n", num[id], f.URL, oneLine(f.Quote), f.CheckedAt.UTC().Format(time.RFC3339Nano))
+		fmt.Fprintf(&b, "[^%d]: %s — \"%s\" (checked %s)\n", num[id], f.URL, oneLine(unlinked(f.Quote)), f.CheckedAt.UTC().Format(time.RFC3339Nano))
 	}
 	return b.String(), cited, dropped
 }

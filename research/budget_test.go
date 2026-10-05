@@ -86,6 +86,27 @@ func TestBudget_ResearchShare(t *testing.T) {
 	}
 }
 
+// TestBudget_AdmitFinish: the judge that finishes an extracted page is
+// admitted after write-now (its facts are paid for), but never past the
+// research share (review of #60).
+func TestBudget_AdmitFinish(t *testing.T) {
+	t.Parallel()
+	db, b := newRun(t, 1, 0)
+	b.WriteNow()
+	if _, err := admitResearch(b); !errors.Is(err, research.ErrWriteNow) {
+		t.Fatalf("after write-now: AdmitResearch = %v, want ErrWriteNow", err)
+	}
+	release, err := research.AdmitFinish(b, "openai", "gpt-4o-mini", prompt)
+	if err != nil {
+		t.Fatalf("after write-now: AdmitFinish = %v, want admitted", err)
+	}
+	release()
+	spend(t, db, 0.86)
+	if _, err := research.AdmitFinish(b, "openai", "gpt-4o-mini", prompt); !errors.Is(err, research.ErrWriteNow) {
+		t.Errorf("past the research share: AdmitFinish = %v, want ErrWriteNow", err)
+	}
+}
+
 // TestBudget_WriteCeiling: the write's refusal is the existing exit-code
 // sentinel, never the research-stage control flow — asserted both ways, so
 // a swapped wrap can't pass.

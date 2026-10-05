@@ -147,7 +147,7 @@ func soft(ctx context.Context, err error) bool {
 func (r *run) call(ctx context.Context, judge bool, purpose string, sch *extract.Schema, material, instructions string, out any) error {
 	for {
 		p, m := r.pair(judge)
-		err := r.callOnce(ctx, p, m, purpose, sch, material, instructions, out)
+		err := r.callOnce(ctx, judge, p, m, purpose, sch, material, instructions, out)
 		switch {
 		case err == nil:
 			r.mu.Lock()
@@ -170,11 +170,22 @@ func (r *run) call(ctx context.Context, judge bool, purpose string, sch *extract
 	}
 }
 
-func (r *run) callOnce(ctx context.Context, p, m, purpose string, sch *extract.Schema, material, instructions string, out any) error {
+// A judge call finishes a page whose facts are already stored and paid
+// for, so write-now doesn't refuse it (the research share still does);
+// every other call applies the operator's Control first, so Write now acts
+// within one call.
+func (r *run) callOnce(ctx context.Context, judge bool, p, m, purpose string, sch *extract.Schema, material, instructions string, out any) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	release, err := r.budget.AdmitResearch(p, m, material+instructions)
+	admit := r.budget.admitFinish
+	if !judge {
+		if err := r.syncControl(); err != nil {
+			return abortError{err}
+		}
+		admit = r.budget.AdmitResearch
+	}
+	release, err := admit(p, m, material+instructions)
 	if err != nil {
 		if errors.Is(err, ErrWriteNow) {
 			return err

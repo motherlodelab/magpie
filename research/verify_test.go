@@ -10,8 +10,9 @@ import (
 
 func TestQuoteFound(t *testing.T) {
 	t.Parallel()
-	page := "The **alpha index** rose 12 percent in 2025 — according to the [annual survey](https://a.example/s).\n\n" +
-		"Costs | rose | sharply in every region\n\nShe said “prices won’t fall”\u00a0soon… maybe\n\nA \\*literal\\* asterisk line."
+	page := "The feature is unsupported on Windows and Linux.\n\nThe deal is worth $1,000,000 in cash.\n\n" +
+		"About 2.5 million users signed up last year.\n\nThe **alpha index** rose 12 percent in 2025 — according to the [annual survey](https://a.example/s).\n\n" +
+		"| Costs | rose | sharply in every region |\n\nShe said “prices won’t fall”\u00a0soon… maybe\n\nA \\*literal\\* asterisk line."
 	for _, tc := range []struct {
 		name, quote string
 		want        bool
@@ -29,12 +30,46 @@ func TestQuoteFound(t *testing.T) {
 		{"period added mid-sentence", "according to the annual survey.", true},
 		{"wrapped in quotes", `"The alpha index rose 12 percent in 2025"`, true},
 		{"trim never shortens past the words", "The alpha index rose 12 percent in 2026.", false},
+		// Review of #60: a match must sit at word and number boundaries.
+		{"dropped negating prefix", "supported on Windows and Linux", false},
+		{"number cut short", "The alpha index rose 12 percent in 202", false},
+		{"thousands cut short", "The deal is worth $1,000", false},
+		{"decimal cut short", "5 million users signed up last year", false},
 		{"absent", "The beta index fell 3 percent in 2024", false},
 		{"too short", "rose 12 percent", false}, // < 20 runes after folding matches anywhere
 		{"too long", strings.Repeat("alpha ", 101), false},
 		// Folds are symmetric: a quote that matches only through a change the
 		// page doesn't have (a dash where the page has none) stays unfound.
 		{"no false fold", "The alpha index - rose 12 percent", false},
+	} {
+		if got := research.QuoteFound(page, tc.quote); got != tc.want {
+			t.Errorf("%s: QuoteFound(%q) = %v, want %v", tc.name, tc.quote, got, tc.want)
+		}
+	}
+}
+
+// TestQuoteFound_Meaning: folds only remove markup — characters that carry
+// meaning inline must still match exactly (review of #60).
+func TestQuoteFound_Meaning(t *testing.T) {
+	t.Parallel()
+	page := "## Results\n\n> Median latency is >100 ms under sustained load.\n\n" +
+		"The product is the #1 seller in Europe this year.\n\n" +
+		"Set max_open_conns to five in the pool config.\n\n" +
+		"Use timeout := new(30 * time.Second) in the client.\n\n" +
+		"[Go](https://en.wikipedia.org/wiki/Go_(programming_language)) is a statically typed language.\n\n" +
+		"[#67627](https://golang.org/issue/67627)cmd/compile: panic in the type checker"
+	for _, tc := range []struct {
+		name, quote string
+		want        bool
+	}{
+		{"heading and blockquote markers fold", "Results Median latency is >100 ms under sustained load", true},
+		{"inline > kept", "Median latency is 100 ms under sustained load", false},
+		{"inline # kept", "The product is the 1 seller in Europe this year", false},
+		{"intraword _ kept", "Set maxopenconns to five in the pool config", false},
+		{"intraword _ matches", "Set max_open_conns to five in the pool config", true},
+		{"spaced * kept", "Use timeout := new(30 time.Second) in the client", false},
+		{"link with parens in its URL", "Go is a statically typed language.", true},
+		{"a link's edge is a word boundary", "cmd/compile: panic in the type checker", true},
 	} {
 		if got := research.QuoteFound(page, tc.quote); got != tc.want {
 			t.Errorf("%s: QuoteFound(%q) = %v, want %v", tc.name, tc.quote, got, tc.want)

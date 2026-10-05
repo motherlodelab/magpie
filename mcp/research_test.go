@@ -121,12 +121,12 @@ var researchArgs = map[string]any{"question": "How did the alpha index move in 2
 
 func TestResearch_Tool(t *testing.T) {
 	var mu sync.Mutex
-	notes := 0
+	var notes []string
 	cs, _ := researchServer(t, 0, &sdk.ClientOptions{
 		ProgressNotificationHandler: func(_ context.Context, req *sdk.ProgressNotificationClientRequest) {
 			mu.Lock()
 			defer mu.Unlock()
-			notes++
+			notes = append(notes, req.Params.Message)
 			if req.Params.Message == "" {
 				t.Error("progress notification with empty message")
 			}
@@ -142,8 +142,9 @@ func TestResearch_Tool(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if notes < 1 {
-		t.Error("0 progress notifications, want ≥ 1")
+	// The run id comes first, so a client that times out can still poll.
+	if len(notes) < 1 || !strings.Contains(notes[0], fmt.Sprint(out["run_id"])) {
+		t.Errorf("progress = %q, want ≥ 1 with the run id first", notes)
 	}
 }
 
@@ -172,17 +173,41 @@ func TestResearch_DefaultCap(t *testing.T) {
 	}
 }
 
+// TestResearch_ServerCap: a client may lower the server's cap, never raise
+// it (review of #60).
+func TestResearch_ServerCap(t *testing.T) {
+	cs, db := researchServer(t, 0.5, nil)
+	for _, tc := range []struct {
+		ask  float64
+		want string
+	}{{500, `"max_cost_usd":0.5`}, {0.2, `"max_cost_usd":0.2`}} {
+		args := map[string]any{"max_cost_usd": tc.ask}
+		for k, v := range researchArgs {
+			args[k] = v
+		}
+		out := decodeOut(t, callTool(t, cs, "research", args, ""))
+		rr, err := db.GetResearchRun(fmt.Sprint(out["run_id"]))
+		if err != nil || !strings.Contains(rr.Options, tc.want) {
+			t.Errorf("asked $%v: stored options %s (%v), want %s", tc.ask, rr.Options, err, tc.want)
+		}
+	}
+}
+
 func TestResearch_Errors(t *testing.T) {
-	cs, _ := researchServer(t, 0, nil)
+	cs, db := researchServer(t, 0, nil)
 	for _, tc := range []struct {
 		args map[string]any
 		want string
 	}{
 		{map[string]any{"effort": "quick"}, "question"},
 		{map[string]any{"question": "q", "from": "2026-13-01"}, "from"},
+		{map[string]any{"question": "q", "run_id": "abc"}, "run_id"}, // never a second paid run
 	} {
 		if msg := toolErrText(t, callTool(t, cs, "research", tc.args, "")); !strings.Contains(msg, tc.want) {
 			t.Errorf("error %s does not name %q", msg, tc.want)
 		}
+	}
+	if n := llmCalls(t, db); n != 0 {
+		t.Errorf("refused calls made %d LLM calls", n)
 	}
 }

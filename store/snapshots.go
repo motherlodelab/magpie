@@ -7,13 +7,17 @@ import (
 	"time"
 )
 
-// Snapshot is the latest watch check-in for a URL.
+// Snapshot is one stored version of a URL.
 type Snapshot struct {
 	URL         string
 	ContentHash string
 	Markdown    string
 	CheckedAt   time.Time
 	Changed     bool
+	// Source is who stored it: "watch" (PutSnapshot), "read"
+	// (RecordSnapshot), or "" for rows from before the column (watch's, as
+	// LatestWatchSnapshot reads them). Watch history filters reads out.
+	Source string
 }
 
 // PutSnapshot appends one snapshot row and returns the checked_at it
@@ -95,8 +99,8 @@ func (d *DB) oneSnapshot(op, where string, args ...any) (Snapshot, bool, error) 
 	var s Snapshot
 	var checked string
 	var changed int
-	err := d.db.QueryRow(`SELECT url, content_hash, markdown, checked_at, changed FROM snapshots `+where, args...).
-		Scan(&s.URL, &s.ContentHash, &s.Markdown, &checked, &changed)
+	err := d.db.QueryRow(`SELECT url, content_hash, markdown, checked_at, changed, source FROM snapshots `+where, args...).
+		Scan(&s.URL, &s.ContentHash, &s.Markdown, &checked, &changed, &s.Source)
 	if err == sql.ErrNoRows {
 		return Snapshot{}, false, nil
 	}
@@ -119,7 +123,7 @@ func (d *DB) ListSnapshots(rawURL string, limit int) ([]Snapshot, error) {
 	if limit <= 0 {
 		limit = 10
 	}
-	rows, err := d.db.Query(`SELECT url, content_hash, markdown, checked_at, changed
+	rows, err := d.db.Query(`SELECT url, content_hash, markdown, checked_at, changed, source
 		FROM snapshots WHERE url_hash=? ORDER BY checked_at DESC LIMIT ?`,
 		sha256Hex(rawURL), limit)
 	if err != nil {
@@ -131,7 +135,7 @@ func (d *DB) ListSnapshots(rawURL string, limit int) ([]Snapshot, error) {
 		var s Snapshot
 		var checked string
 		var changed int
-		if err := rows.Scan(&s.URL, &s.ContentHash, &s.Markdown, &checked, &changed); err != nil {
+		if err := rows.Scan(&s.URL, &s.ContentHash, &s.Markdown, &checked, &changed, &s.Source); err != nil {
 			return nil, fmt.Errorf("store: list snapshots: %w", err)
 		}
 		t, err := time.Parse(time.RFC3339Nano, checked)
