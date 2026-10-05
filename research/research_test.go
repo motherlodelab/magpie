@@ -58,6 +58,16 @@ func TestNormalized_Defaults(t *testing.T) {
 			t.Errorf("%s: judge = (%q, %q), want (%q, %q)", tc.name, p, m, tc.wantProvider, tc.wantMd)
 		}
 	}
+
+	s := valid()
+	in := []string{"searxng", "duckduckgo", "searxng"}
+	s.Search = in
+	if n := mustNorm(t, s); !reflect.DeepEqual(n.Search, []string{"duckduckgo", "searxng"}) {
+		t.Errorf("search = %v, want sorted and compacted [duckduckgo searxng]", n.Search)
+	}
+	if !reflect.DeepEqual(in, []string{"searxng", "duckduckgo", "searxng"}) {
+		t.Errorf("Normalized touched the caller's search slice: %v", in)
+	}
 }
 
 func TestNormalized_Rejects(t *testing.T) {
@@ -82,6 +92,10 @@ func TestNormalized_Rejects(t *testing.T) {
 		{"deny space", func(o *research.Options) { o.Sources.Deny = []string{"a b.com"} }, "sources.deny"},
 		{"deny userinfo", func(o *research.Options) { o.Sources.Deny = []string{"x.com@evil"} }, "sources.deny"},
 		{"prefer fragment", func(o *research.Options) { o.Sources.Prefer = []string{"ok.com", "x.com#y"} }, "sources.prefer"},
+		{"unknown provider", func(o *research.Options) { o.Provider = "gpt" }, "provider"},
+		{"unknown judge provider", func(o *research.Options) { o.JudgeProvider, o.JudgeModel = "other", "m" }, "judge_provider"},
+		{"search bing", func(o *research.Options) { o.Search = []string{"searxng", "bing"} }, "search"},
+		{"web off", func(o *research.Options) { off := false; o.Sources.Web = &off }, "sources.web"},
 	} {
 		o := valid()
 		tc.edit(&o)
@@ -133,7 +147,7 @@ func TestOptions_JSONRoundTrip(t *testing.T) {
 		t.Errorf("zero SourcePolicy = %s (%v), want {}", b, err)
 	}
 
-	off := false
+	on := true // off is rejected until DR6 (TestNormalized_Rejects)
 	ict := time.FixedZone("ICT", 7*3600)
 	o := valid()
 	o.JudgeProvider, o.JudgeModel = "anthropic", "claude-sonnet-5"
@@ -141,9 +155,10 @@ func TestOptions_JSONRoundTrip(t *testing.T) {
 		Allow: []string{"nature.com"}, Deny: []string{"ads.example.com"}, Prefer: []string{"arxiv.org"},
 		From: time.Date(2025, 6, 1, 12, 0, 0, 0, ict), // non-UTC: DeepEqual on it would fail (loc), .Equal holds
 		To:   time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-		Web:  &off,
+		Web:  &on,
 	}
 	o.SessionDomains = []string{"intranet.example"}
+	o.Search = []string{"brave", "duckduckgo"}
 	n := mustNorm(t, o)
 	b, err = json.Marshal(n)
 	if err != nil {
