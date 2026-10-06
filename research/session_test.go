@@ -78,9 +78,9 @@ func sessionScript(task, material string) (string, error) {
 
 // sessHook is Job.Session's fake: ok / miss / fail, every call recorded.
 type sessHook struct {
-	mu         sync.Mutex
-	miss, fail bool
-	asked      []string
+	mu                sync.Mutex
+	miss, fail, empty bool
+	asked             []string
 }
 
 func (h *sessHook) fn(rawURL string) (string, string, bool, error) {
@@ -92,6 +92,8 @@ func (h *sessHook) fn(rawURL string) (string, string, bool, error) {
 		return "", "", false, errors.New("keyring locked")
 	case h.miss:
 		return "", "", false, nil
+	case h.empty:
+		return "", sessUA, true, nil // ok without a cookie: a logged-out read
 	}
 	return sessCookie, sessUA, true, nil
 }

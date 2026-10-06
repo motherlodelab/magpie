@@ -2,6 +2,7 @@ package fetch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
+	"github.com/go-rod/rod/lib/launcher/flags"
 )
 
 // RodFetcher renders JS via go-rod. The browser launches on first Fetch,
@@ -57,9 +59,13 @@ func (r *RodFetcher) Close() error {
 		r.browser = nil
 	}
 	if r.launcher != nil {
+		dir := r.launcher.Get(flags.UserDataDir)
 		r.launcher.Kill()
-		r.launcher.Cleanup()
+		r.launcher.Cleanup() // waits for exit, then removes dir — but drops RemoveAll's error
 		r.launcher = nil
+		if rerr := os.RemoveAll(dir); rerr != nil { // no-op when Cleanup removed it; else the failure surfaces
+			err = errors.Join(err, fmt.Errorf("fetch: remove browser profile %s: %w", dir, rerr))
+		}
 	}
 	return err
 }
@@ -106,7 +112,7 @@ func (r *RodFetcher) ensureBrowser() error {
 	r.launcher = l // launched: Close kills it and removes the profile, connected or not
 	r.browser = rod.New().ControlURL(controlURL)
 	if err := r.browser.Connect(); err != nil {
-		r.browser = nil // never-connected: Close() must stay a no-op
+		r.browser = nil // never connected: no browser to close, but Close still kills the launcher and removes its profile
 		return fmt.Errorf("fetch: connect browser: %w", err)
 	}
 	return nil

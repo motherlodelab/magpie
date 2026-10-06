@@ -289,7 +289,7 @@ func (r *run) route(ctx context.Context, u string) route {
 		switch {
 		case err != nil:
 			return route{issue: "error", detail: "session: " + err.Error()}
-		case ok:
+		case ok && cookies != "": // no cookie = logged out, whatever ok says: robots must apply
 			rt.opts.Cookies, rt.key, rt.authed = cookies, "session:"+d, true
 			if ua != "" {
 				rt.opts.Headers = []string{"User-Agent: " + ua}

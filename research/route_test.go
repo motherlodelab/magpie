@@ -43,12 +43,12 @@ func TestRoute(t *testing.T) {
 	}
 	floor := rate.Every(research.SessionGap())
 	for _, tc := range []struct {
-		name, url  string
-		miss, fail bool
-		key        string // "" = skipped (issue set)
-		authed     bool
-		issue      string
-		check      func(t *testing.T, detail string, limit rate.Limit)
+		name, url         string
+		miss, fail, empty bool
+		key               string // "" = skipped (issue set)
+		authed            bool
+		issue             string
+		check             func(t *testing.T, detail string, limit rate.Limit)
 	}{
 		{name: "session ok", url: "https://paper.example/a", key: "session:paper.example", authed: true,
 			check: func(t *testing.T, _ string, l rate.Limit) {
@@ -64,6 +64,7 @@ func TestRoute(t *testing.T) {
 					t.Errorf("limit = %v: a logged-out read must not take the session floor", l)
 				}
 			}},
+		{name: "ok without a cookie reads public", url: "https://paper.example/a", empty: true, key: "paper.example"},
 		{name: "hook error", url: "https://paper.example/a", fail: true, issue: "error",
 			check: func(t *testing.T, d string, _ rate.Limit) {
 				if !strings.HasPrefix(d, "session: ") || !strings.Contains(d, "keyring locked") || strings.Contains(d, "s3cret") {
@@ -86,7 +87,7 @@ func TestRoute(t *testing.T) {
 		{name: "public allowed", url: "https://pub.example/open", key: "pub.example"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h := &sessHook{miss: tc.miss, fail: tc.fail}
+			h := &sessHook{miss: tc.miss, fail: tc.fail, empty: tc.empty}
 			key, authed, issue, detail, limit, err := research.Route(context.Background(), deps, job(h), tc.url)
 			if err != nil {
 				t.Fatal(err)

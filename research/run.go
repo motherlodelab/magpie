@@ -68,9 +68,11 @@ type Job struct {
 	// Session returns the login to read rawURL with: a "n=v; …" Cookie
 	// value and the capture-time User-Agent. It is called only for hosts
 	// under Options.Sources.Sessions and is required when they're set (a
-	// surface without one — the CLI, MCP — can't run them). ok=false reads
-	// the page logged out (robots.txt then applies). Its error must never
-	// carry a cookie value: it lands in the read ledger.
+	// surface without one — the CLI, MCP — can't run them). It is called
+	// concurrently from the run's sub-researchers: it must be goroutine-
+	// safe. ok=true promises a usable cookie; ok=false (or an empty cookie)
+	// reads the page logged out, and robots.txt then applies. Its error
+	// must never carry a cookie value: it lands in the read ledger.
 	Session func(rawURL string) (cookies, userAgent string, ok bool, err error)
 }
 
