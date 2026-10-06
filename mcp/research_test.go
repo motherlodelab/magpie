@@ -106,6 +106,7 @@ func researchServer(t *testing.T, maxCost float64, opts *sdk.ClientOptions) (*sd
 			Fetcher: &fakeAgentFetcher{bodies: map[string]fakeAgentResp{
 				"alpha.example/report": {body: researchHTML(t, researchQuote+" across all surveyed regions, the annual report found.")},
 				"beta.example/notes":   {body: researchHTML(t, "Nothing on this page bears on the question, though it is long enough to read.")},
+				"/robots.txt$":         {status: 404}, // research reads check robots: a 404 allows all (an error would block every read)
 			}},
 			ExtractorFor: func(p, _, m string, _ *extract.Schema, runID string) (extract.Extractor, error) {
 				return &boundTask{l: l, provider: p, model: m, runID: runID}, nil

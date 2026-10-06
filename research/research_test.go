@@ -95,7 +95,6 @@ func TestNormalized_Rejects(t *testing.T) {
 		{"unknown provider", func(o *research.Options) { o.Provider = "gpt" }, "provider"},
 		{"unknown judge provider", func(o *research.Options) { o.JudgeProvider, o.JudgeModel = "other", "m" }, "judge_provider"},
 		{"search bing", func(o *research.Options) { o.Search = []string{"searxng", "bing"} }, "search"},
-		{"web off", func(o *research.Options) { off := false; o.Sources.Web = &off }, "sources.web"},
 	} {
 		o := valid()
 		tc.edit(&o)
@@ -147,17 +146,15 @@ func TestOptions_JSONRoundTrip(t *testing.T) {
 		t.Errorf("zero SourcePolicy = %s (%v), want {}", b, err)
 	}
 
-	on := true // off is rejected until DR6 (TestNormalized_Rejects)
 	ict := time.FixedZone("ICT", 7*3600)
 	o := valid()
 	o.JudgeProvider, o.JudgeModel = "anthropic", "claude-sonnet-5"
 	o.Sources = research.SourcePolicy{
 		Allow: []string{"nature.com"}, Deny: []string{"ads.example.com"}, Prefer: []string{"arxiv.org"},
-		From: time.Date(2025, 6, 1, 12, 0, 0, 0, ict), // non-UTC: DeepEqual on it would fail (loc), .Equal holds
-		To:   time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-		Web:  &on,
+		Sessions: []string{"nature.com"},
+		From:     time.Date(2025, 6, 1, 12, 0, 0, 0, ict), // non-UTC: DeepEqual on it would fail (loc), .Equal holds
+		To:       time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	}
-	o.SessionDomains = []string{"intranet.example"}
 	o.Search = []string{"brave", "duckduckgo"}
 	n := mustNorm(t, o)
 	b, err = json.Marshal(n)
@@ -215,5 +212,63 @@ func TestPlan_Validate(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: Validate = %v, want an error naming %q", tc.name, err, tc.want)
 		}
+	}
+}
+
+// TestNormalized_Sessions: session domains canonicalize like allow/deny/
+// prefer, and one the policy can never read is refused before any spend.
+func TestNormalized_Sessions(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		src  research.SourcePolicy
+		want []string // nil = an error naming errSub
+		err  []string
+	}{
+		{"canonical", research.SourcePolicy{Sessions: []string{"https://www.FT.com/x"}}, []string{"ft.com"}, nil},
+		{"duplicates", research.SourcePolicy{Sessions: []string{"ft.com", "FT.com."}}, []string{"ft.com"}, nil},
+		{"denied", research.SourcePolicy{Deny: []string{"ft.com"}, Sessions: []string{"ft.com"}}, nil, []string{`sources.sessions: "ft.com"`, "never reads it"}},
+		{"denied parent", research.SourcePolicy{Deny: []string{"ft.com"}, Sessions: []string{"markets.ft.com"}}, nil, []string{`sources.sessions: "markets.ft.com"`}},
+		{"outside allow", research.SourcePolicy{Allow: []string{"nature.com"}, Sessions: []string{"ft.com"}}, nil, []string{`sources.sessions: "ft.com"`}},
+		{"inside allow", research.SourcePolicy{Allow: []string{"ft.com"}, Sessions: []string{"markets.ft.com"}}, []string{"markets.ft.com"}, nil},
+		{"allow narrower", research.SourcePolicy{Allow: []string{"markets.ft.com"}, Sessions: []string{"ft.com"}}, []string{"ft.com"}, nil},
+		{"garbage", research.SourcePolicy{Sessions: []string{"foo"}}, nil, []string{`sources.sessions: "foo": not a domain`}},
+	} {
+		o := valid()
+		o.Sources = tc.src
+		before := slices.Clone(o.Sources.Sessions)
+		n, err := o.Normalized()
+		switch {
+		case tc.err != nil:
+			for _, sub := range tc.err {
+				if err == nil || !strings.Contains(err.Error(), sub) {
+					t.Errorf("%s: err = %v, want one containing %q", tc.name, err, sub)
+				}
+			}
+		case err != nil:
+			t.Errorf("%s: %v", tc.name, err)
+		case !slices.Equal(n.Sources.Sessions, tc.want):
+			t.Errorf("%s: sessions = %q, want %q", tc.name, n.Sources.Sessions, tc.want)
+		}
+		if !slices.Equal(o.Sources.Sessions, before) {
+			t.Errorf("%s: caller's slice mutated: %q, was %q", tc.name, o.Sources.Sessions, before)
+		}
+	}
+
+	o := valid()
+	o.Sources.Sessions = []string{"ft.com"}
+	b, err := json.Marshal(mustNorm(t, o))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := string(b); !strings.Contains(s, `"sources":{"sessions":["ft.com"]}`) || strings.Contains(s, "session_domains") || strings.Contains(s, `"web"`) {
+		t.Errorf("marshalled = %s, want sessions nested under sources and no session_domains/web key", s)
+	}
+	var legacy research.Options // a pre-DR6 row: the web key is gone, not refused
+	if err := json.Unmarshal([]byte(`{"provider":"openai","max_cost_usd":1,"sources":{"web":false},"session_domains":["x.com"]}`), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.Normalized(); err != nil {
+		t.Errorf("legacy row: %v", err)
 	}
 }

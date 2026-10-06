@@ -67,6 +67,17 @@ var lowValueSegs = map[string]bool{
 	"tag": true, "tags": true, "category": true, "categories": true,
 }
 
+// actionSegs mark paths where a logged-in GET may act (log out, change a
+// setting, pay). On a session host they — and lowValueSegs (login, account,
+// cart, checkout, …) — are never read: read-only means no side effects,
+// and a SERP is untrusted.
+// ponytail: a fixed segment list; a side-effecting GET on an innocuous
+// path, or one in the query string, gets through. Upgrade: a per-domain
+// path allow-list.
+var actionSegs = map[string]bool{"logout": true, "log-out": true, "signout": true, "sign-out": true,
+	"settings": true, "preferences": true, "billing": true, "subscribe": true, "unsubscribe": true,
+	"delete": true, "remove": true, "cancel": true, "password": true, "admin": true}
+
 // RankURLs fuses search result lists (one per query × backend call, each in
 // rank order) into one ranking, best first. Score = Σ 1/(60+rank) over the
 // lists a URL appears in (reciprocal-rank fusion: agreement and position both
@@ -79,8 +90,9 @@ var lowValueSegs = map[string]bool{
 // Dropped: URLs that don't canonicalize; every scheme but http/https — a
 // SERP is untrusted and must never route a read to file:// (fetch reads it
 // under MAGPIE_ALLOW_FILE=1), ftp:// or a scheme-relative //host; denied
-// domains (deny beats allow and prefer); and — when Allow is set — every
-// domain outside it. DR6 adds the authenticated-context rule here.
+// domains (deny beats allow and prefer); when Allow is set, every domain
+// outside it; and on a session host (Sessions), every action or account
+// path (actionSegs ∪ lowValueSegs) — a read there carries the user's login.
 //
 // Ties break on best rank, then URL. Visiting the top K and skipping
 // already-visited URLs are the caller's. policy must come from
@@ -122,9 +134,9 @@ func RankURLs(lists [][]scrape.SearchHit, policy SourcePolicy) []ScoredURL {
 	}
 	rs := make([]ranked, 0, len(byURL))
 	for canon, a := range byURL {
-		// A trailing dot names the same host; without the trim, "example.com." slips past a deny.
-		host := strings.TrimSuffix(strings.TrimPrefix(a.u.Hostname(), "www."), ".")
-		if matchesAny(host, policy.Deny) || (len(policy.Allow) > 0 && !matchesAny(host, policy.Allow)) {
+		host := policyHost(a.u)
+		if matchesAny(host, policy.Deny) || (len(policy.Allow) > 0 && !matchesAny(host, policy.Allow)) ||
+			(matchesAny(host, policy.Sessions) && sessionUnsafe(a.u.Path)) {
 			continue
 		}
 		r := ranked{ScoredURL{URL: canon, Score: a.rrf, Lists: a.lists}, a.best}
@@ -152,6 +164,37 @@ func RankURLs(lists [][]scrape.SearchHit, policy SourcePolicy) []ScoredURL {
 func matchesAny(host string, domains []string) bool {
 	return slices.ContainsFunc(domains, func(d string) bool {
 		return host == d || strings.HasSuffix(host, "."+d)
+	})
+}
+
+// policyHost is the host the source policy matches: www. and a trailing
+// dot trimmed — "example.com." names the same host, and without the trim
+// it slips past a deny.
+func policyHost(u *url.URL) string {
+	return strings.TrimSuffix(strings.TrimPrefix(strings.ToLower(u.Hostname()), "www."), ".")
+}
+
+// sessionOf is the session domain covering rawURL's host, or "".
+func sessionOf(rawURL string, sessions []string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	host := policyHost(u)
+	for _, d := range sessions {
+		if matchesAny(host, []string{d}) {
+			return d
+		}
+	}
+	return ""
+}
+
+// sessionUnsafe: a path segment in actionSegs or lowValueSegs (the root is
+// fine) — never read with a login.
+func sessionUnsafe(p string) bool {
+	return slices.ContainsFunc(strings.Split(p, "/"), func(seg string) bool {
+		seg = strings.ToLower(seg)
+		return actionSegs[seg] || lowValueSegs[seg]
 	})
 }
 

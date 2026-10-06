@@ -56,20 +56,39 @@ type page struct {
 }
 
 // corpus is the fake vertical.Fetcher: canonical URL → page; unknown URLs
-// are a plain error (unreadable "error"). It counts fetches per URL.
+// are a plain error (unreadable "error"). It counts fetches per URL and
+// keeps each URL's last request (who carried the cookie).
 type corpus struct {
-	mu    sync.Mutex
-	pages map[string]page
-	hits  map[string]int
+	mu     sync.Mutex
+	pages  map[string]page
+	hits   map[string]int
+	reqs   map[string]fetch.FetchRequest
+	gated  map[string]bool // served whole only when Cookies carries sessCookie
+	robots []string        // robots.txt URLs asked for, in order
 }
 
+// Fetch answers robots.txt first and never counts it, so fetch-count
+// assertions are about pages; a missing robots.txt is a 404 RESPONSE
+// (allow all), never an error (unreachable = disallow all, RFC 9309).
 func (c *corpus) Fetch(_ context.Context, req fetch.FetchRequest) (*fetch.FetchResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if strings.HasSuffix(req.URL, "/robots.txt") {
+		c.robots = append(c.robots, req.URL)
+		if p, ok := c.pages[req.URL]; ok {
+			return &fetch.FetchResponse{URL: req.URL, FinalURL: req.URL, StatusCode: p.status, HTML: p.html,
+				Headers: http.Header{"Content-Type": {"text/plain"}}}, nil
+		}
+		return &fetch.FetchResponse{URL: req.URL, FinalURL: req.URL, StatusCode: 404}, nil
+	}
 	c.hits[req.URL]++
+	c.reqs[req.URL] = req
 	p, ok := c.pages[req.URL]
 	if !ok {
 		return nil, fmt.Errorf("fetch: HTTP 404 for %s", req.URL)
+	}
+	if c.gated[req.URL] && !strings.Contains(req.Cookies, sessCookie) {
+		p = page{401, []byte(loginWall)}
 	}
 	// Echo the request URL: Result.URL comes from here, and a mismatch with
 	// the visited/pin key must surface, not hide.
@@ -81,6 +100,18 @@ func (c *corpus) fetches(u string) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.hits[u]
+}
+
+func (c *corpus) req(u string) fetch.FetchRequest {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.reqs[u]
+}
+
+func (c *corpus) robotsAsked() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.robots...)
 }
 
 func (c *corpus) total() int {
@@ -236,7 +267,7 @@ func newEnv(t *testing.T, pages map[string]page, serp map[string][]string, scrip
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() }) //nolint:errcheck // test cleanup
-	e := &env{db: db, web: &corpus{pages: pages, hits: map[string]int{}}, search: newSearx(t, serp)}
+	e := &env{db: db, web: &corpus{pages: pages, hits: map[string]int{}, reqs: map[string]fetch.FetchRequest{}}, search: newSearx(t, serp)}
 	e.llm = &fakeLLM{t: t, db: db, perCall: 0.001, script: script, down: map[string]bool{}}
 	e.deps = scrape.Deps{DB: db, ExtractorFor: e.llm.extractorFor,
 		APIKeyFor: func(string) string { return "k" }, Fetcher: e.web}

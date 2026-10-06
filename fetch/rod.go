@@ -2,6 +2,7 @@ package fetch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -9,12 +10,16 @@ import (
 
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
+	"github.com/go-rod/rod/lib/launcher/flags"
 )
 
 // RodFetcher renders JS via go-rod. The browser launches on first Fetch,
 // never at import or startup. Pool size 1 in Phase 1.
 type RodFetcher struct {
 	browser *rod.Browser
+	// launcher is the local launch (nil with CDP): Close removes its temp
+	// profile, which holds the read's cookie jar.
+	launcher *launcher.Launcher
 	// CDP is an optional remote browser endpoint (ws://, wss://, or
 	// http(s)://). When set, ensureBrowser connects to it and the local
 	// launcher never runs — no download, no local Chrome (farms/CI).
@@ -39,16 +44,30 @@ func (r *RodFetcher) Fetch(ctx context.Context, req FetchRequest) (*FetchRespons
 	return r.FetchWithActions(ctx, req, nil)
 }
 
-// Close shuts the browser down (no zombies).
+// Close shuts the browser down (no zombies) and, for a local launch,
+// removes its temp profile: rod's default $TMPDIR/rod/user-data/<rand>
+// holds the cookie database, which must not outlive the read.
+// ponytail: Launcher.Kill sleeps 1 s first (rod's guard for child
+// processes), so every local browser read pays it; Cleanup alone would
+// wait forever on a browser that ignored Browser.close.
 func (r *RodFetcher) Close() error {
-	if r.browser == nil {
-		return nil
+	var err error
+	if r.browser != nil {
+		if cerr := r.browser.Close(); cerr != nil {
+			err = fmt.Errorf("fetch: close browser: %w", cerr)
+		}
+		r.browser = nil
 	}
-	if err := r.browser.Close(); err != nil {
-		return fmt.Errorf("fetch: close browser: %w", err)
+	if r.launcher != nil {
+		dir := r.launcher.Get(flags.UserDataDir)
+		r.launcher.Kill()
+		r.launcher.Cleanup() // waits for exit, then removes dir — but drops RemoveAll's error
+		r.launcher = nil
+		if rerr := os.RemoveAll(dir); rerr != nil { // no-op when Cleanup removed it; else the failure surfaces
+			err = errors.Join(err, fmt.Errorf("fetch: remove browser profile %s: %w", dir, rerr))
+		}
 	}
-	r.browser = nil
-	return nil
+	return err
 }
 
 // ensureBrowser lazily launches and connects the browser exactly once
@@ -90,9 +109,10 @@ func (r *RodFetcher) ensureBrowser() error {
 	if err != nil {
 		return fmt.Errorf("fetch: launch browser: %w", err)
 	}
+	r.launcher = l // launched: Close kills it and removes the profile, connected or not
 	r.browser = rod.New().ControlURL(controlURL)
 	if err := r.browser.Connect(); err != nil {
-		r.browser = nil // never-connected: Close() must stay a no-op
+		r.browser = nil // never connected: no browser to close, but Close still kills the launcher and removes its profile
 		return fmt.Errorf("fetch: connect browser: %w", err)
 	}
 	return nil

@@ -31,6 +31,10 @@ type Checker struct {
 	// validated): robots fetches ride it so a proxy-only site's politeness
 	// check uses the same egress as its page fetches. nil = env pool.
 	proxy *url.URL
+	// fetcher, when set, replaces client (UseFetcher).
+	fetcher interface {
+		Fetch(context.Context, fetch.FetchRequest) (*fetch.FetchResponse, error)
+	}
 }
 
 type robotsEntry struct {
@@ -58,6 +62,16 @@ func NewChecker() *Checker {
 // the first Allowed/CrawlDelay/Sitemaps — bodies are cached per run,
 // so a later swap would only affect hosts not yet loaded.
 func (c *Checker) UseProxy(u *url.URL) { c.proxy = u }
+
+// UseFetcher routes robots.txt fetches through f, the run's page fetcher:
+// the same egress, SSRF guard and test fake as its pages. A fetch error is
+// unreachable (disallow all, RFC 9309); the status code decides the rest,
+// exactly as with the client. Call it before the first Allowed.
+func (c *Checker) UseFetcher(f interface {
+	Fetch(context.Context, fetch.FetchRequest) (*fetch.FetchResponse, error)
+}) {
+	c.fetcher = f
+}
 
 // delayHandler collects Crawl-Delay for groups matching * or our token.
 type delayHandler struct {
@@ -107,6 +121,14 @@ func (c *Checker) load(ctx context.Context, host, scheme string) robotsEntry {
 
 func (c *Checker) fetchRobots(ctx context.Context, robotsURL string) robotsEntry {
 	ctx = fetch.WithRequestProxy(ctx, c.proxy) // no-op without a per-run proxy
+	if c.fetcher != nil {
+		resp, err := c.fetcher.Fetch(ctx, fetch.FetchRequest{URL: robotsURL, Timeout: 10 * time.Second,
+			Headers: []string{"User-Agent: " + robotsUA}})
+		if err != nil {
+			return robotsEntry{denyAll: true}
+		}
+		return c.parseRobots(resp.StatusCode, resp.HTML[:min(len(resp.HTML), 1<<20)])
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, robotsURL, nil)
 	if err != nil {
 		return robotsEntry{denyAll: true}
@@ -121,12 +143,18 @@ func (c *Checker) fetchRobots(ctx context.Context, robotsURL string) robotsEntry
 	if err != nil {
 		return robotsEntry{denyAll: true}
 	}
+	return c.parseRobots(resp.StatusCode, body)
+}
+
+// parseRobots maps a robots.txt response: 2xx parsed, 4xx allow all,
+// anything else disallow all.
+func (c *Checker) parseRobots(code int, body []byte) robotsEntry {
 	switch {
-	case resp.StatusCode/100 == 2:
+	case code/100 == 2:
 		h := &delayHandler{token: c.token}
 		grobotstxt.Parse(string(body), h)
 		return robotsEntry{body: string(body), delay: h.delay, sitemap: grobotstxt.Sitemaps(string(body))}
-	case resp.StatusCode >= 400 && resp.StatusCode < 500:
+	case code >= 400 && code < 500:
 		return robotsEntry{} // unavailable → allow all
 	default:
 		return robotsEntry{denyAll: true} // 5xx → disallow all

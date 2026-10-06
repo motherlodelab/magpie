@@ -7,6 +7,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/motherlodelab/magpie/crawl"
 	"github.com/motherlodelab/magpie/research"
 	"github.com/motherlodelab/magpie/scrape"
 )
@@ -238,3 +239,43 @@ func TestRankURLs_Deterministic(t *testing.T) {
 		t.Errorf("RankURLs(empty lists) = %+v, want empty", got)
 	}
 }
+
+// TestRankURLs_SessionActionPaths: on a session host an action or account
+// path is never read — the read would carry the login. Public hosts keep
+// today's scoring: logout untouched, a lowValueSegs path ×0.5.
+func TestRankURLs_SessionActionPaths(t *testing.T) {
+	t.Parallel()
+	var dropped []string
+	for _, p := range []string{"logout", "log-out", "signout", "settings/email", "billing", "delete?id=1",
+		"account", "cart", "checkout", "search?q=x", "tag/x", "category/y", "LOGOUT"} {
+		dropped = append(dropped, "https://paper.example/"+p)
+	}
+	dropped = append(dropped, "https://www.paper.example/logout", "https://news.paper.example/logout")
+	kept := []string{"https://paper.example/articles/1", "https://paper.example/"}
+	got := research.RankURLs([][]scrape.SearchHit{
+		list(append(slices.Clone(dropped), kept...)...),
+		list("https://pub.example/logout"),
+		list("https://pub.example/account"),
+		list("https://pub.example/news"),
+	}, research.SourcePolicy{Sessions: []string{"paper.example"}})
+
+	var want []string
+	for _, u := range append(kept, "https://pub.example/logout", "https://pub.example/account", "https://pub.example/news") {
+		c, err := crawl.Canonicalize(u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want = append(want, c)
+	}
+	if g := urlsOf(got); !slices.Equal(sorted(g), sorted(want)) {
+		t.Errorf("kept = %q, want exactly %q", g, want)
+	}
+	_, out := find(t, got, want[2])
+	_, acct := find(t, got, want[3])
+	_, news := find(t, got, want[4])
+	if out.Score != news.Score || acct.Score != news.Score*0.5 {
+		t.Errorf("public scores: logout %v, account %v, news %v — want logout = news, account = news/2 (unchanged)", out.Score, acct.Score, news.Score)
+	}
+}
+
+func sorted(s []string) []string { s = slices.Clone(s); slices.Sort(s); return s }

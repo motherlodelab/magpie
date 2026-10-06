@@ -206,26 +206,44 @@ func (r *run) pick(lists [][]scrape.SearchHit) []string {
 	return out
 }
 
-// read is one page: a tool call, host pacing, a ledger row, then the
-// joined scrape. A page that can't be read is recorded (issue: message)
-// and skipped. A read page is pinned, extracted and verified; its row is
-// marked done last, so a stop mid-page leaves it pending and a resume
-// reads it again. It returns the usable facts and the tasks to queue first.
+// read is one page: its route, a tool call, pacing, a ledger row, then
+// the joined scrape. A page its route skips (robots, a session error) or
+// that can't be read is recorded (issue: message) and skipped; a skip
+// spends no tool call. A read page is pinned, extracted and verified; its
+// row is marked done last, so a stop mid-page leaves it pending and a
+// resume reads it again. It returns the usable facts and the tasks to
+// queue first.
 func (r *run) read(ctx context.Context, a Angle, u, target string) (int, []task, error) {
 	if err := r.syncControl(); err != nil {
 		return 0, nil, err
 	}
+	rt := r.route(ctx, u)
+	if rt.issue != "" {
+		if err := ctx.Err(); err != nil {
+			return 0, nil, err // a cancelled robots fetch reads as unreachable: not the page's fault
+		}
+		// Enqueue only now: ahead of Tool, a refused admission would leave
+		// the URL pending, and a resume reads pending URLs.
+		if _, err := r.d.DB.Enqueue(r.id, []string{u}, 0); err != nil {
+			return 0, nil, err
+		}
+		if err := r.d.DB.MarkError(r.id, store.URLHash(u), rt.issue+": "+rt.detail); err != nil {
+			return 0, nil, err
+		}
+		r.emit(Event{Stage: "unreadable", URL: u, Issue: rt.issue, Detail: rt.detail})
+		return 0, nil, nil
+	}
 	if err := r.budget.Tool(); err != nil {
 		return 0, nil, err
 	}
-	if err := r.lim.Wait(ctx, hostOf(u)); err != nil {
+	if err := r.lim.Wait(ctx, rt.key); err != nil {
 		return 0, nil, err
 	}
 	if _, err := r.d.DB.Enqueue(r.id, []string{u}, 0); err != nil {
 		return 0, nil, err
 	}
-	r.emit(Event{Stage: "read", URL: u})
-	res, err := scrape.Run(ctx, r.d, u, scrape.Options{RunID: r.id})
+	r.emit(Event{Stage: "read", URL: u, Session: rt.authed})
+	res, err := scrape.Run(ctx, r.d, u, rt.opts)
 	if err == nil && strings.TrimSpace(res.Markdown) == "" {
 		err = &clean.QualityError{Issue: clean.IssueEmpty, URL: u}
 	}
@@ -237,18 +255,56 @@ func (r *run) read(ctx context.Context, a Angle, u, target string) (int, []task,
 		if merr := r.d.DB.MarkError(r.id, store.URLHash(u), issue+": "+err.Error()); merr != nil {
 			return 0, nil, merr
 		}
-		r.emit(Event{Stage: "unreadable", URL: u, Issue: issue, Detail: err.Error()})
+		r.emit(Event{Stage: "unreadable", URL: u, Issue: issue, Detail: err.Error(), Session: rt.authed})
 		return 0, nil, nil
 	}
 	pin, err := r.d.DB.RecordSnapshot(u, res.Markdown)
 	if err != nil {
 		return 0, nil, err
 	}
-	n, front, err := r.extractPage(ctx, a, u, res.Title, res.Markdown, pin, target)
+	n, front, err := r.extractPage(ctx, a, u, res.Title, res.Markdown, pin, target, rt.authed)
 	if err != nil {
 		return 0, nil, err
 	}
 	return n, front, r.d.DB.MarkDone(r.id, store.URLHash(u))
+}
+
+// route is one read's pre-fetch decision. issue set = skip the page.
+type route struct {
+	opts          scrape.Options
+	key           string // the limiter bucket: the host, or "session:"+domain
+	authed        bool   // the read carries the user's login
+	issue, detail string
+}
+
+// route decides how u is read. A session host asks Job.Session: a login
+// reads it authenticated (Cookie + capture UA, the session bucket, no
+// robots — spec §6.3), a miss reads it as public, an error skips it (the
+// hook's error carries no cookie). A public read must pass robots.txt
+// (unreachable = disallow, RFC 9309), and a Crawl-delay floors its host.
+func (r *run) route(ctx context.Context, u string) route {
+	rt := route{opts: scrape.Options{RunID: r.id}, key: hostOf(u)}
+	if d := sessionOf(u, r.o.Sources.Sessions); d != "" {
+		cookies, ua, ok, err := r.session(u)
+		switch {
+		case err != nil:
+			return route{issue: "error", detail: "session: " + err.Error()}
+		case ok && cookies != "": // no cookie = logged out, whatever ok says: robots must apply
+			rt.opts.Cookies, rt.key, rt.authed = cookies, "session:"+d, true
+			if ua != "" {
+				rt.opts.Headers = []string{"User-Agent: " + ua}
+			}
+			return rt
+		}
+	}
+	switch ok, err := r.robots.Allowed(ctx, u); {
+	case err != nil:
+		return route{issue: "robots", detail: err.Error()}
+	case !ok:
+		return route{issue: "robots", detail: "robots.txt disallows it"}
+	}
+	r.lim.SetFloor(rt.key, r.robots.CrawlDelay(ctx, u)) // 0 = no Crawl-delay: a no-op
+	return rt
 }
 
 // issueOf buckets a read failure for the couldn't-read list.
@@ -267,7 +323,18 @@ func issueOf(err error) string {
 // inline, and turns the result into follow-ups: pivotal facts queue their
 // counter-evidence search and gaps queue as questions (both at the front),
 // and a counter-evidence page records its stance on its target.
-func (r *run) extractPage(ctx context.Context, a Angle, u, title, md string, pin time.Time, target string) (int, []task, error) {
+//
+// authed is the taint: a page read with the user's login composes no
+// search query — no counter-evidence search, no gaps, and no findings for
+// the replan (which writes new queries). Its facts still reach the judge
+// and the writer, whose output never leaves as a query. The stance it
+// records on a public target composes nothing, so it counts.
+// ponytail: withheld findings mean a sessions-only run replans blind and
+// may add angles up to its replan cap. Upgrade: a redacted finding line
+// ("fN (session source: <domain>)"). And a pivotal claim read with a login
+// gets no counter-evidence search, so it keeps the judge's verdict instead
+// of the two-domain rule's. Upgrade: settle it single-source.
+func (r *run) extractPage(ctx context.Context, a Angle, u, title, md string, pin time.Time, target string, authed bool) (int, []task, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Research question: %s\nBrief: %s\n", a.Question, r.plan.Brief)
 	if s := r.steering(); s != "" {
@@ -301,7 +368,7 @@ func (r *run) extractPage(ctx context.Context, a Angle, u, title, md string, pin
 			continue // the store refuses them, and nothing could verify them
 		}
 		cq := ""
-		if f.Pivotal && pivots < maxPivotsPerPage && oneLine(f.CounterQuery) != "" {
+		if f.Pivotal && !authed && pivots < maxPivotsPerPage && oneLine(f.CounterQuery) != "" {
 			cq = oneLine(f.CounterQuery)
 			pivots++
 		}
@@ -346,7 +413,9 @@ func (r *run) extractPage(ctx context.Context, a Angle, u, title, md string, pin
 		if v.status == "softened" {
 			claim = v.note
 		}
-		r.findings = append(r.findings, finding(f.FactID, claim, u))
+		if !authed {
+			r.findings = append(r.findings, finding(f.FactID, claim, u))
+		}
 		if counter[i] != "" {
 			r.pivots[f.FactID] = &pivot{id: f.FactID, claim: f.Claim, domain: domain, status: v.status, note: v.note}
 			front = append(front, task{q: counter[i], target: f.FactID})
@@ -372,11 +441,11 @@ func (r *run) extractPage(ctx context.Context, a Angle, u, title, md string, pin
 		}
 	}
 	for _, g := range ex.Gaps[:min(len(ex.Gaps), maxGapsPerPage)] {
-		if g = oneLine(g); g != "" {
+		if g = oneLine(g); g != "" && !authed {
 			front = append(front, task{q: g})
 		}
 	}
-	r.emit(Event{Stage: "facts", URL: u, Detail: fmt.Sprintf("%d facts, %d usable", len(facts), len(usable))})
+	r.emit(Event{Stage: "facts", URL: u, Detail: fmt.Sprintf("%d facts, %d usable", len(facts), len(usable)), Session: authed})
 	return len(usable), front, nil
 }
 

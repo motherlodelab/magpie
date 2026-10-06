@@ -1,6 +1,15 @@
 package research
 
-import "github.com/motherlodelab/magpie/extract"
+import (
+	"context"
+	"strings"
+	"time"
+
+	"golang.org/x/time/rate"
+
+	"github.com/motherlodelab/magpie/extract"
+	"github.com/motherlodelab/magpie/scrape"
+)
 
 // JudgeOf exposes the unexported judge rule to the black-box tests.
 var JudgeOf = Options.judge
@@ -43,4 +52,19 @@ func Settle(p Pivot) (status, note string) {
 		in.evidence = append(in.evidence, stance{verdict: s.Verdict, domain: s.Domain, ids: s.IDs})
 	}
 	return settle(in)
+}
+
+// SessionGap exposes the authenticated-read floor (TestRoute compares rates).
+func SessionGap() time.Duration { return sessionGap }
+
+// Route runs prepare, then one read's routing decision for rawURL — the
+// hook, robots, the bucket — and reports the limit its bucket ended with.
+// The black-box tests can't reach r.lim; this is the one window.
+func Route(ctx context.Context, d scrape.Deps, j Job, rawURL string) (key string, authed bool, issue, detail string, limit rate.Limit, err error) {
+	r, err := prepare(d, j, strings.TrimSpace(j.Question))
+	if err != nil {
+		return "", false, "", "", 0, err
+	}
+	rt := r.route(ctx, rawURL)
+	return rt.key, rt.authed, rt.issue, rt.detail, r.lim.Limit(rt.key), nil
 }
