@@ -22,28 +22,31 @@ import (
 // Options configures one research run. JSON tags are the persisted form
 // (research_runs.options); it holds no secrets — keys come from scrape.Deps.
 type Options struct {
-	Provider       string       `json:"provider"` // required; surfaces resolve config defaults first (scrape.Options convention)
-	Model          string       `json:"model"`
-	JudgeProvider  string       `json:"judge_provider,omitempty"` // "" = Provider
-	JudgeModel     string       `json:"judge_model,omitempty"`    // "" = Model (only when JudgeProvider is "")
-	MaxCostUSD     float64      `json:"max_cost_usd"`             // the cap; required, > 0
-	MaxToolCalls   int          `json:"max_tool_calls"`           // searches + page reads; 0 = the effort's default
-	Effort         string       `json:"effort"`                   // quick|standard|deep; "" = standard
-	Sources        SourcePolicy `json:"sources"`
-	SessionDomains []string     `json:"session_domains,omitempty"` // opaque to core: the desktop resolves sessions (DR6)
-	Search         []string     `json:"search,omitempty"`          // search backends; empty = the keyless ones (duckduckgo, searxng when configured) — keyed backends must be named
+	Provider      string       `json:"provider"` // required; surfaces resolve config defaults first (scrape.Options convention)
+	Model         string       `json:"model"`
+	JudgeProvider string       `json:"judge_provider,omitempty"` // "" = Provider
+	JudgeModel    string       `json:"judge_model,omitempty"`    // "" = Model (only when JudgeProvider is "")
+	MaxCostUSD    float64      `json:"max_cost_usd"`             // the cap; required, > 0
+	MaxToolCalls  int          `json:"max_tool_calls"`           // searches + page reads; 0 = the effort's default
+	Effort        string       `json:"effort"`                   // quick|standard|deep; "" = standard
+	Sources       SourcePolicy `json:"sources"`
+	Search        []string     `json:"search,omitempty"` // search backends; empty = the keyless ones (duckduckgo, searxng when configured) — keyed backends must be named
 }
 
 // SourcePolicy says where a run may read. Domains are bare host suffixes
 // (Normalized canonicalizes what users type); a domain covers its
 // subdomains.
 type SourcePolicy struct {
-	Allow  []string  `json:"allow,omitempty"`  // non-empty = only these domains and their subdomains
-	Deny   []string  `json:"deny,omitempty"`   // never read; beats Allow and Prefer
-	Prefer []string  `json:"prefer,omitempty"` // ranked up (×2)
-	From   time.Time `json:"from,omitzero"`    // published-date range; applied to facts in DR2
-	To     time.Time `json:"to,omitzero"`
-	Web    *bool     `json:"web,omitempty"` // nil = on; off semantics are DR2's
+	Allow  []string `json:"allow,omitempty"`  // non-empty = only these domains and their subdomains
+	Deny   []string `json:"deny,omitempty"`   // never read; beats Allow and Prefer
+	Prefer []string `json:"prefer,omitempty"` // ranked up (×2)
+	// Sessions are read with the user's login through Job.Session. They
+	// never widen Allow, Deny beats them, and a page read with a login
+	// never composes a search query (the taint, extractPage). "Only my
+	// subscriptions" is Allow set to these domains.
+	Sessions []string  `json:"sessions,omitempty"`
+	From     time.Time `json:"from,omitzero"` // published-date range; applied to facts in DR2
+	To       time.Time `json:"to,omitzero"`
 }
 
 // ponytail: recommended defaults from the evidence report ⌗ (Quick 1 ×
@@ -60,7 +63,8 @@ var efforts = map[string]struct{ SubResearchers, ToolCalls int }{
 // in, domains canonicalized, sorted and de-duplicated — or an error naming
 // the field and the offending value. On error the returned Options is zero:
 // no half-filled value to misuse. The caller's slices are never touched.
-// SessionDomains pass through untouched (the desktop validates them).
+// A session domain the policy can never read (denied, or outside allow)
+// is refused: it would attach a login to nothing.
 func (o Options) Normalized() (Options, error) {
 	if o.Provider == "" {
 		return Options{}, fmt.Errorf("research: provider: required")
@@ -93,7 +97,7 @@ func (o Options) Normalized() (Options, error) {
 	for _, l := range []struct {
 		name string
 		list *[]string
-	}{{"allow", &o.Sources.Allow}, {"deny", &o.Sources.Deny}, {"prefer", &o.Sources.Prefer}} {
+	}{{"allow", &o.Sources.Allow}, {"deny", &o.Sources.Deny}, {"prefer", &o.Sources.Prefer}, {"sessions", &o.Sources.Sessions}} {
 		if len(*l.list) == 0 {
 			continue
 		}
@@ -111,8 +115,13 @@ func (o Options) Normalized() (Options, error) {
 	if f, t := o.Sources.From, o.Sources.To; !f.IsZero() && !t.IsZero() && f.After(t) {
 		return Options{}, fmt.Errorf("research: sources.from: %s is after to %s", f.Format(time.RFC3339), t.Format(time.RFC3339))
 	}
-	if w := o.Sources.Web; w != nil && !*w {
-		return Options{}, fmt.Errorf("research: sources.web: off needs a non-web source (session sources arrive in DR6)")
+	for _, d := range o.Sources.Sessions {
+		// Overlap either way counts: allow markets.ft.com reads with an ft.com session there.
+		inAllow := len(o.Sources.Allow) == 0 || matchesAny(d, o.Sources.Allow) ||
+			slices.ContainsFunc(o.Sources.Allow, func(a string) bool { return strings.HasSuffix(a, "."+d) })
+		if matchesAny(d, o.Sources.Deny) || !inAllow {
+			return Options{}, fmt.Errorf("research: sources.sessions: %q: the source policy never reads it (denied, or outside allow)", d)
+		}
 	}
 	if len(o.Search) > 0 {
 		names := scrape.SearchProviderNames()

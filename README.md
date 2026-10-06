@@ -654,7 +654,10 @@ evidence and stands only with support from a second registrable domain
 (contradicted ⇒ contested, both sides shown; single-source ⇒ "Per
 <domain>: …"). The run's reads, facts and verdicts are stored in the
 cache DB (`research_runs`, `facts`, `snapshots`), and History shows one row
-per run.
+per run. Research reads respect robots.txt: a disallowed page (or a host
+whose robots.txt is unreachable) is listed as unreadable `robots`, and no
+tool call is spent on it. Reading with a login (`sources.sessions` +
+`Job.Session`) is a library surface only — the CLI and MCP refuse it.
 
 ### Vertical credentials
 

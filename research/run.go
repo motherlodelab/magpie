@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"golang.org/x/sync/errgroup"
@@ -45,6 +46,13 @@ const (
 // crawl.HostLimiters defaults. Vars so tests can lift them (SetLimits).
 var limitRPS, limitBurst = 1.0, 3
 
+// sessionGap paces authenticated reads: one bucket per session domain (its
+// subdomains share it — one account), floored at one read per sessionGap.
+// ponytail: burst stays HostLimiters' 3 (no per-key burst), so three reads
+// can go back to back; volume per run is bounded only by MaxToolCalls.
+// Upgrade: a per-key burst and a per-domain setting, if a ban is reported.
+var sessionGap = 10 * time.Second
+
 // Job is one research run's inputs.
 type Job struct {
 	RunID    string  // "" = minted here; set = the caller minted it (desktop Start), or resume when research_runs has it
@@ -57,6 +65,13 @@ type Job struct {
 	Approve func(Plan) (Plan, error)
 	OnEvent func(Event) // nil = silent; called serially (never concurrently); must not block
 	Control *Control    // nil = no steering
+	// Session returns the login to read rawURL with: a "n=v; …" Cookie
+	// value and the capture-time User-Agent. It is called only for hosts
+	// under Options.Sources.Sessions and is required when they're set (a
+	// surface without one — the CLI, MCP — can't run them). ok=false reads
+	// the page logged out (robots.txt then applies). Its error must never
+	// carry a cookie value: it lands in the read ledger.
+	Session func(rawURL string) (cookies, userAgent string, ok bool, err error)
 }
 
 // Control steers a run in flight from any goroutine (desktop Steer /
@@ -98,7 +113,8 @@ type Event struct {
 	Stage    string
 	Detail   string  // human line: the query and backend, the title, the error
 	URL      string  // read, unreadable, facts
-	Issue    string  // unreadable: login-required|access-denied|unavailable|empty|challenge|error
+	Issue    string  // unreadable: login-required|access-denied|unavailable|empty|challenge|robots|error
+	Session  bool    // read, unreadable, facts: this read carried the user's login
 	SpentUSD float64 // run_history.usd_estimate at emit time
 	CapUSD   float64
 	Facts    int // ledger rows so far
@@ -132,7 +148,9 @@ type run struct {
 	backends []string
 	onEvent  func(Event)
 	ctl      *Control
-	plan     Plan // the scope; replans append angles under leadMu
+	session  func(string) (string, string, bool, error)
+	robots   *crawl.Checker // public reads only: authenticated reads skip it (spec §6.3)
+	plan     Plan           // the scope; replans append angles under leadMu
 
 	leadMu  sync.Mutex
 	active  int // sub-researchers running
@@ -285,8 +303,8 @@ func Check(d scrape.Deps, j Job) error {
 }
 
 // prepare validates the job with no I/O — the question, Normalized, the
-// writer's and the judge's keys, the search backends — and builds the
-// run.
+// writer's and the judge's keys, the search backends, a session source for
+// session domains — and builds the run.
 func prepare(d scrape.Deps, j Job, question string) (*run, error) {
 	if question == "" {
 		return nil, fmt.Errorf("research: question: required")
@@ -298,9 +316,18 @@ func prepare(d scrape.Deps, j Job, question string) (*run, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := &run{d: d, id: j.RunID, o: o, onEvent: j.OnEvent, ctl: j.Control,
-		lim: crawl.NewHostLimiters(limitRPS, limitBurst), visited: map[string]bool{},
+	if len(o.Sources.Sessions) > 0 && j.Session == nil {
+		return nil, fmt.Errorf("research: sources.sessions: this surface has no session source")
+	}
+	r := &run{d: d, id: j.RunID, o: o, onEvent: j.OnEvent, ctl: j.Control, session: j.Session,
+		lim: crawl.NewHostLimiters(limitRPS, limitBurst), robots: crawl.NewChecker(), visited: map[string]bool{},
 		pivots: map[string]*pivot{}, extractors: map[exKey]extract.Extractor{}}
+	if d.Fetcher != nil {
+		r.robots.UseFetcher(d.Fetcher) // the run's egress and test fake, not a second client
+	}
+	for _, s := range o.Sources.Sessions {
+		r.lim.SetFloor("session:"+s, sessionGap)
+	}
 	r.judgeP, r.judgeM = o.judge()
 	for _, p := range []string{o.Provider, r.judgeP} {
 		if extract.NeedsAPIKey(p) && r.key(p) == "" {
