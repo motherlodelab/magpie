@@ -201,9 +201,21 @@ func cookieParams(rawURL, rawCookies string) []*proto.NetworkCookieParam {
 // Run cookies are injected pre-navigation (CDP), so the document request
 // itself carries them.
 func (r *RodFetcher) openPage(cctx context.Context, req FetchRequest, caps *xhrCollector) (*rod.Page, error) {
+	// The browser path honours the same pre-dial gate as StaticFetcher.do
+	// (http.go:283): Browser render, actions, XHR capture and screenshots
+	// otherwise reach loopback, link-local and file:// (desktop QA B2).
+	// Checked before the tab exists; guardNavigation covers every later hop.
+	if err := ValidateURL(cctx, req.URL, r.lookup, r.SSRF); err != nil {
+		return nil, err
+	}
 	page, err := r.browser.Context(cctx).Page(proto.TargetCreateTarget{})
 	if err != nil {
 		return nil, fmt.Errorf("fetch: open page: %w", err)
+	}
+	refused, err := r.guardNavigation(page)
+	if err != nil {
+		_ = page.Close() //nolint:errcheck // error path; teardown failure unactionable
+		return nil, err
 	}
 	// Request-header plumbing splits on what Chromium actually honors:
 	// User-Agent and Accept-Language are browser-controlled (rod emulates
@@ -259,9 +271,46 @@ func (r *RodFetcher) openPage(cctx context.Context, req FetchRequest, caps *xhrC
 	}
 	if err := page.Navigate(req.URL); err != nil {
 		_ = page.Close() //nolint:errcheck // error path; teardown failure unactionable
+		select {
+		case rerr := <-refused: // a redirect hop was refused: the typed error, not ERR_BLOCKED_BY_CLIENT
+			return nil, rerr
+		default:
+		}
 		return nil, fmt.Errorf("fetch: navigate: %w", err)
 	}
 	return page, nil
+}
+
+// guardNavigation re-validates every document request the page makes
+// (redirect hops, meta/JS navigations, frames) with the entry URL's rule
+// and fails a refused one before Chrome dials; everything else continues
+// untouched. The router runs on the page ctx — the fetch budget every
+// caller cancels on return — so its goroutine ends with the fetch. The
+// channel carries the first refusal.
+// ponytail: a refusal after Navigate returns (a JS or click navigation)
+// is blocked but leaves Chrome's error page as the fetch result rather
+// than failing it; and Chrome resolves DNS itself, so a rebind between
+// this lookup and its dial is the ceiling (the static path re-checks the
+// peer post-dial). A guarded proxy is the upgrade path for both.
+func (r *RodFetcher) guardNavigation(page *rod.Page) (<-chan error, error) {
+	refused := make(chan error, 1)
+	router := page.HijackRequests()
+	err := router.Add("*", proto.NetworkResourceTypeDocument, func(h *rod.Hijack) {
+		if verr := ValidateURL(h.Request.Req().Context(), h.Request.URL().String(), r.lookup, r.SSRF); verr != nil {
+			select {
+			case refused <- verr:
+			default:
+			}
+			h.Response.Fail(proto.NetworkErrorReasonBlockedByClient)
+			return
+		}
+		h.ContinueRequest(&proto.FetchContinueRequest{})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("fetch: guard navigation: %w", err)
+	}
+	go router.Run()
+	return refused, nil
 }
 
 // navRetryable reports the WaitLoad navigation race: the page JS-redirected

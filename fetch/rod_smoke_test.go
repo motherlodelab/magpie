@@ -3,6 +3,8 @@
 package fetch_test
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -11,13 +13,25 @@ import (
 	"github.com/go-rod/rod/lib/launcher"
 )
 
+// htmlPage serves html from a loopback origin: the browser path refuses
+// data: URLs as the static path does (SSRF guard), and loopback rides the
+// test-binary hatch.
+func htmlPage(t *testing.T, html string) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(html)) //nolint:errcheck // test server
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
 func TestRodSmoke(t *testing.T) {
 	if _, ok := launcher.LookPath(); !ok {
 		t.Skip("no Chrome/Chromium found")
 	}
 	r := fetch.NewRodFetcher()
 	defer r.Close()
-	resp, err := r.Fetch(t.Context(), fetch.FetchRequest{URL: "data:text/html,<html><body><h1>hi</h1></body></html>"})
+	resp, err := r.Fetch(t.Context(), fetch.FetchRequest{URL: htmlPage(t, "<html><body><h1>hi</h1></body></html>")})
 	if err != nil {
 		t.Fatalf("rod fetch: %v", err)
 	}
@@ -33,7 +47,7 @@ func TestScreenshotPage(t *testing.T) {
 	// launcher.LookPath only sees system Chrome; rod's managed download
 	// (launcher.New) is the common CI/dev path — probe by launching and
 	// skip only on launch failure (environment, not flake).
-	page := `data:text/html,<html><head><title>shot</title></head><body style="margin:0"><div style="width:1200px;height:900px;background:#36c"></div></body></html>`
+	page := htmlPage(t, `<html><head><title>shot</title></head><body style="margin:0"><div style="width:1200px;height:900px;background:#36c"></div></body></html>`)
 	png, err := fetch.ScreenshotPage(t.Context(), page, 1280, 800)
 	if err != nil {
 		if strings.Contains(err.Error(), "launch browser") || strings.Contains(err.Error(), "connect browser") {

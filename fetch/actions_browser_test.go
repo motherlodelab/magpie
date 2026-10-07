@@ -24,7 +24,7 @@ import (
 // magic bytes, and a second action AFTER it still executes (capture is
 // mid-flow, not terminal — proven by the throwing eval-js).
 func TestScreenshotActions_MidFlow(t *testing.T) {
-	page := `data:text/html,<html><head><title>shot</title></head><body style="margin:0"><div style="width:800px;height:600px;background:#36c">prose placeholder body text</div></body></html>`
+	page := htmlPage(t, `<html><head><title>shot</title></head><body style="margin:0"><div style="width:800px;height:600px;background:#36c">prose placeholder body text</div></body></html>`)
 	pngPath := filepath.Join(t.TempDir(), "mid.png")
 	acts, err := fetch.ParseActions([]string{"screenshot " + pngPath, "eval-js () => { throw new Error('second action ran'); }"})
 	if err != nil {
@@ -47,7 +47,7 @@ func TestScreenshotActions_MidFlow(t *testing.T) {
 // smoke — nil actions takes the exact ScreenshotPage path (both succeed,
 // both produce PNG bytes).
 func TestScreenshotActions_NilActsMatchesScreenshotPage(t *testing.T) {
-	page := `data:text/html,<html><head><title>shot</title></head><body style="margin:0"><div style="width:800px;height:600px;background:#36c">prose placeholder body text</div></body></html>`
+	page := htmlPage(t, `<html><head><title>shot</title></head><body style="margin:0"><div style="width:800px;height:600px;background:#36c">prose placeholder body text</div></body></html>`)
 	pngA, err := fetch.ScreenshotActions(context.Background(), page, 640, 480, nil)
 	if err != nil {
 		if strings.Contains(err.Error(), "launch browser") || strings.Contains(err.Error(), "connect browser") {

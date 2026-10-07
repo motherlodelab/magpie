@@ -28,10 +28,19 @@ type RodFetcher struct {
 	// the browser is lazily created once per fetcher.
 	CDP   string
 	Proxy string
+	// SSRF gates every document request the page makes — the entry URL,
+	// redirect hops, later navigations — with ValidateURL, the static
+	// path's pre-dial rule. The zero value is strict; NewRodFetcher sets
+	// resolvedSSRFOptions (strict in production, relaxed under go test).
+	SSRF SSRFOptions
+
+	lookup LookupFunc               // test seam: nil = the default resolver
+	launch func(*launcher.Launcher) // test seam: extra launch flags before Launch; nil = none
 }
 
-// NewRodFetcher constructs without launching (launch is lazy).
-func NewRodFetcher() *RodFetcher { return &RodFetcher{} }
+// NewRodFetcher constructs without launching (launch is lazy), with the
+// same SSRF resolution as NewStaticFetcher.
+func NewRodFetcher() *RodFetcher { return &RodFetcher{SSRF: resolvedSSRFOptions()} }
 
 // CanHandle is true; the caller decides escalation via ScoreJSRequired.
 func (r *RodFetcher) CanHandle(req FetchRequest) bool { return true }
@@ -104,6 +113,9 @@ func (r *RodFetcher) ensureBrowser() error {
 		// grammar (ponytail: authenticated browser proxies need an extension
 		// — upgrade path if a caller asks).
 		l = l.Proxy(scheme + "://" + u.Host)
+	}
+	if r.launch != nil {
+		r.launch(l)
 	}
 	controlURL, err := l.Launch()
 	if err != nil {

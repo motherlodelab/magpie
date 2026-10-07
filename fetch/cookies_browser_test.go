@@ -9,6 +9,7 @@ package fetch_test
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -48,14 +49,27 @@ func TestRod_CookieInjection(t *testing.T) {
 	}
 
 	// Host scoping, same jar: the cookie was set for 127.0.0.1; the same
-	// server via the localhost name is a DIFFERENT cookie domain — the
-	// jar must not leak it across hosts.
+	// handler on 127.0.0.2 is a DIFFERENT cookie domain — the jar must not
+	// leak it across hosts. (Not the localhost name: the SSRF guard refuses
+	// it in every mode, as the static path does.)
 	if !strings.HasPrefix(srv.URL, "http://127.0.0.1") {
 		t.Skipf("origin host is %s, scoping probe needs 127.0.0.1", srv.URL)
 	}
-	localURL := strings.Replace(srv.URL, "127.0.0.1", "localhost", 1)
-	if body := do(localURL, ""); strings.Contains(body, "k=v") {
-		t.Errorf("127.0.0.1-scoped cookie leaked to the localhost domain: %q", body)
+	l, err := net.Listen("tcp", "127.0.0.2:0")
+	if err != nil {
+		t.Skipf("no 127.0.0.2 loopback address: %v", err)
+	}
+	other := httptest.NewUnstartedServer(srv.Config.Handler)
+	_ = other.Listener.Close() //nolint:errcheck // replaced before Start
+	other.Listener = l
+	other.Start()
+	t.Cleanup(other.Close)
+	body := do(other.URL, "")
+	if !strings.Contains(body, "CK=") {
+		t.Fatalf("second origin never answered (%q) — the scoping probe proves nothing", body)
+	}
+	if strings.Contains(body, "k=v") {
+		t.Errorf("127.0.0.1-scoped cookie leaked to the 127.0.0.2 domain: %q", body)
 	}
 
 	// Fresh browser, fresh jar: a cookie-less run on a new RodFetcher
