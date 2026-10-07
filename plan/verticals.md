@@ -195,3 +195,88 @@ of more ideas ≈ 0; ship instead.
 Strongest pulls if anything jumps the queue: `usaspending` and `openalex`
 (least-known, most defensible); `tech_stack` (native differentiator, no
 external dependency).
+
+## Treg-derived verticals (2026-09-22) — demand evidence from a paid-tool catalog
+
+Source: github.com/superdesigndev/treg — "OpenRouter for agent tools": a
+metered proxy over 3,000+ endpoints from 60+ paid-data providers (Semrush,
+Apollo, Hunter, Moz, Brightdata, PredictLeads…). Their catalog is a clean demand
+map: every capability id exists because someone pays per call. They A/B five
+product lines with Google Ads, i.e. the five clusters below are *tested* demand,
+not guesses:
+
+1. **SEO data** ($214/mo Semrush+SerpApi replaced) — kw ideas $0–40/call,
+   kw volume to $10/call, backlinks from $0.024/call
+2. **Lead enrichment** ($142/mo Apollo+Hunter+Lusha) — the biggest cluster:
+   email find 22 providers $0.005–20/call, email verify 13 providers, email
+   pattern $1–20/call, people/company enrich up to $25/call (Diffbot)
+3. **Social creator trends** ($200/mo X API alone) — served almost entirely by
+   reselling scrapes (Brightdata, Apify, TikHub, ScrapeCreators)
+4. **Competitor ads** ($447/mo tooling) — ad-library endpoints, all OAuth-gated
+5. **Company research / buying signals** ($398/mo Crunchbase+Diffbot) — tech
+   stack $1/call, company news $0.2–1/call, jobs $0.03–1/call, SEC filings
+   $1/call, website evolution $1/call, "intelligence brief" $50/call
+
+Reopened the frozen brainstorm for one pass because this is user-demand
+evidence, which the freeze itself said beats ten ideas from us.
+
+### New verticals (not already in this doc)
+
+| Vertical | Source | Why it matters |
+| :-- | :-- | :-- |
+| `email_harvest` | magpie-native: crawl a domain (home, /contact, /about, /team, mailto:, JSON-LD `email` fields), extract addresses, infer the mail pattern (first.last@…) from found pairs | The discovery half of the single biggest paid cluster (22 providers, $0.005–20/call). Pattern inference alone is sold at $1–20/call. Pure on-page harvest = the two proven patterns, zero key, zero ToS-gray (public pages, public emails) |
+| `email_verify_lite` | stdlib `net.LookupMX` (syntax + MX-exists) + small embedded disposable-domain list | Rides the email_harvest phase. Verify-by-SMTP-RCPT deliberately skipped (gray, gets your IP flagged); MX check alone kills most harvested junk |
+| `keyword_suggest` | autocomplete endpoints: Google `suggestqueries`, YouTube, Bing, Amazon completion APIs — no key, JSON | Lite version of the 7-provider kw-ideas cluster (Semrush charges $40/call). Semi-official, read-only, long-tail SEO + product-research fuel. Caveat: unofficial endpoints, treat like `steam` |
+
+**Promote `tech_stack`** (already in this doc, market-analysis batch) into the
+next-phase queue: PredictLeads sells the same detection at $1/call and Sumble
+wraps it in a $50/call brief. It is also the glue that makes email_harvest a
+*buying-signals* product ("find every company running Shopify, harvest their
+sales emails").
+
+### Tier B from the same evidence
+
+- **`commoncrawl_index`** — free, no-key URL-index API: which URLs of a domain
+  are in the crawl → competitor site-breadth scans at a scale Wayback doesn't
+  cover. Adjacent to `wayback_cdx`, not a replacement
+- **`trends_rss`** — narrow revision of the earlier "skip Google Trends": the
+  `trends.google.com/trending/rss?geo=` endpoint is plain RSS, no key, no JS,
+  newsroom-grade. The widget/JSON endpoints stay skipped
+
+### Existing entries this evidence VALIDATES (no new work, just confidence)
+
+- Finance batch: PredictLeads charges $1/call for SEC filings we get free from
+  EDGAR; stocks cluster is 5–7 providers deep at $0.02–1/call → Phase L stands
+- `job_posting` (Phase K, shipped) — resold at $0.03–1/call
+- `amazon` vertical (Phase W) — resold at $0.0015–0.1/call
+- `wayback_cdx` — PredictLeads sells "website evolution" at $1/call: it is
+  literally Wayback-as-a-service
+- `app_store`, `gdelt`, `wikipedia`, `wikidata`, `gleif`, `sec_form_d` — all
+  map onto the company-research cluster their landing page ad-sells
+
+### The punchline (positioning, not a vertical)
+
+Treg's entire social cluster is Brightdata/Apify/TikHub resells — metered
+scraping with a prepaid balance. Magpie's core loop replaces those line items
+with the user's own machine at $0/call. No vertical to add; that's the pitch.
+
+### Skip (consistent with earlier skips, now with evidence)
+
+- **SERP scraping** (8 providers) — demand is real, which is exactly why
+  SerpApi/DataForSEO charge for an arms-race product; Google-hostile, stays paid
+- **Backlinks** — needs a global link graph; no free source exposes links
+  (Common Crawl index doesn't). Stays paid
+- **LinkedIn/people/phone enrichment** (29-provider cluster) — login-walled,
+  ToS-hostile, resold scrapes. The email_harvest on-page path is the
+  magpie-compatible slice of this demand
+- **Ad libraries** (Meta/Google/TikTok/LinkedIn) — OAuth-gated to an ad
+  account; treg itself must hold those keys
+- **AI-visibility/AEO, video/image/voice gen, GA4/GSC/GBP management** —
+  zero-LLM product or own-account OAuth write APIs; out of scope by design
+
+### Slot into the frozen build order
+
+Phases K/L/M unchanged. **Phase N candidate:** `email_harvest` +
+`email_verify_lite` + `keyword_suggest` + promoted `tech_stack` — all zero-key,
+one harvesting pattern, ~a day together, aimed at the largest tested-demand
+cluster on the board.
