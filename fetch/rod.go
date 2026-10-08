@@ -87,6 +87,9 @@ func (r *RodFetcher) ensureBrowser() error {
 		return nil
 	}
 	if r.CDP != "" {
+		if r.Proxy != "" { // S2b N4: the remote browser owns its egress — refuse, never silently drop
+			return fmt.Errorf("%w: a per-run proxy can't apply to a CDP browser — set the proxy on that browser, or drop the per-run proxy", ErrProxyConfig)
+		}
 		r.browser = rod.New().ControlURL(r.CDP)
 		if err := r.browser.Connect(); err != nil {
 			r.browser = nil // never-connected: Close() must stay a no-op
@@ -105,13 +108,18 @@ func (r *RodFetcher) ensureBrowser() error {
 		if err != nil {
 			return err
 		}
+		// QA S8: --proxy-server has no credential grammar, so an auth proxy
+		// would only fail later as a 407 — refuse it before any launch.
+		// ponytail: refused, not supported. Upgrade: a Fetch-domain auth
+		// loop merged with guardNavigation's router (http(s) proxies only —
+		// Chromium can't authenticate SOCKS5 at all).
+		if u.User != nil {
+			return fmt.Errorf("%w: the browser can't sign in to proxy %s (user:pass) — use an IP-allowlisted proxy for browser renders, or render static", ErrProxyConfig, RedactProxy(u))
+		}
 		scheme := u.Scheme
 		if scheme == "socks5h" {
 			scheme = "socks5" // Chromium's flag grammar has no socks5h
 		}
-		// scheme://host:port only: --proxy-server has no inline-credential
-		// grammar (ponytail: authenticated browser proxies need an extension
-		// — upgrade path if a caller asks).
 		l = l.Proxy(scheme + "://" + u.Host)
 	}
 	if r.launch != nil {

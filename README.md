@@ -612,7 +612,11 @@ Every fetch (static, robots, crawl) goes through one guarded transport:
   fetches and screenshots) at a running Chrome/Chromium via CDP instead of
   launching one — farms and containers never pay the local download. Scheme
   must be `ws`/`wss`/`http(s)` (validated pre-I/O); endpoint credentials
-  never appear in errors.
+  never appear in errors. A per-run proxy (`scrape.Options.Proxy`) is
+  refused over CDP (the remote browser owns its egress), and the browser
+  path refuses a proxy with credentials (`user:pass`) — Chromium's
+  `--proxy-server` can't sign in; use an IP-allowlisted proxy for browser
+  renders, or render static.
 
 ### TLS impersonation
 
