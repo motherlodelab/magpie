@@ -153,7 +153,12 @@ func Run(ctx context.Context, opts Options) (_ Result, err error) {
 		if err == nil || !cc.opened {
 			return
 		}
-		if r, gerr := cc.db.GetRun(cc.runID); gerr != nil || r.Status != "running" {
+		r, gerr := cc.db.GetRun(cc.runID)
+		if gerr != nil {
+			fmt.Fprintf(os.Stderr, "warning: finish guard: read run: %v\n", gerr)
+			return
+		}
+		if r.Status != "running" {
 			return
 		}
 		status := "error"

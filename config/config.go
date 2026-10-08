@@ -174,6 +174,10 @@ func Save(path string, mutate func(*Config) error) error {
 // leaves the old file or the new one, never half. An existing file keeps
 // its mode (new files get 0600), and a symlinked path (a dotfiles setup)
 // is written through, not replaced.
+// ponytail: a DANGLING symlink can't be resolved (EvalSymlinks fails on
+// the missing target), so the rename replaces the link with a regular
+// file — os.WriteFile used to create the target. Upgrade: os.Readlink the
+// path when Lstat says symlink, if a dotfiles user ever hits it.
 func writeFileAtomic(path string, b []byte) error {
 	if real, err := filepath.EvalSymlinks(path); err == nil {
 		path = real
