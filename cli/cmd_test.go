@@ -11,10 +11,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/motherlodelab/magpie/config"
+	"github.com/motherlodelab/magpie/extract"
 
 	"github.com/spf13/cobra"
 )
@@ -957,8 +959,8 @@ func TestSearchCmd_Validation(t *testing.T) {
 	if codeOf(err) != 7 {
 		t.Errorf("missing-key exit = %d, want 7 (err=%v)", codeOf(err), err)
 	}
-	if !strings.Contains(stderr2, "api-key") {
-		t.Errorf("stderr = %q, want the set-key hint", stderr2)
+	if !strings.Contains(stderr2, "MAGPIE_BRAVE_API_KEY") || !strings.Contains(stderr2, "config set-key brave") {
+		t.Errorf("stderr = %q, want the engine's own key hint (QA ST9)", stderr2)
 	}
 	resetGlobals()
 
@@ -1043,5 +1045,16 @@ func TestCrawl_CorpusCLIViolations(t *testing.T) {
 		if !strings.Contains(err.Error(), "corpus") {
 			t.Errorf("row %d error %v does not name corpus", i, err)
 		}
+	}
+}
+
+// TestLLMProvidersMatchExtract (QA ST9): config is a leaf and keeps its own
+// copy of the LLM provider names (the generic key's allowlist); this drift
+// test fails the day extract gains a provider config doesn't know.
+func TestLLMProvidersMatchExtract(t *testing.T) {
+	got := slices.Sorted(slices.Values(config.LLMProviders()))
+	want := slices.Sorted(slices.Values(extract.ProviderNames()))
+	if !slices.Equal(got, want) {
+		t.Errorf("config.LLMProviders() = %v, extract.ProviderNames() = %v: keep them in step", got, want)
 	}
 }

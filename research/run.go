@@ -355,10 +355,11 @@ func prepare(d scrape.Deps, j Job, question string) (*run, error) {
 
 // backends is the run's search fan-out. Unnamed, it is the keyless
 // backends only (duckduckgo, and searxng when MAGPIE_SEARXNG_URL is set):
-// a keyed backend must be asked for, because a key resolver may fall back
-// to a generic key (--api-key, MAGPIE_API_KEY) that is the LLM's, and a
-// default fan-out would send it to every SERP vendor. Named backends must
-// be usable: a keyed one needs its key, searxng its URL.
+// a keyed backend must be asked for, so a run never spends a SERP vendor
+// the caller didn't name. (config.APIKey no longer hands a vendor the
+// generic --api-key/MAGPIE_API_KEY — QA ST9 — but a caller's own resolver
+// may.) Named backends must be usable: a keyed one needs its key, searxng
+// its URL.
 func backends(o Options, keyFor func(string) string) ([]string, error) {
 	if len(o.Search) == 0 {
 		return scrape.SearchProvidersFor(nil), nil

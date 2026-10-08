@@ -7,6 +7,7 @@ package scrape
 // comment lines are stripped before serving.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,7 +20,10 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/motherlodelab/magpie/config"
 	"github.com/motherlodelab/magpie/store"
+
+	"github.com/zalando/go-keyring"
 )
 
 // The external scrape_test helpers are not visible from this internal
@@ -446,5 +450,110 @@ func TestSearchProvidersFor(t *testing.T) {
 		if got := SearchProvidersFor(tc.keyFor); !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("%s: SearchProvidersFor = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+// secretSink stands in for every search vendor (the URL seams below) and
+// counts requests carrying secret in the query or any header — the wire,
+// not the code path. own counts a vendor's own key, the vacuity leg.
+func secretSink(t *testing.T, secret, own string) (leaks, owns *atomic.Int32) {
+	t.Helper()
+	leaks, owns = new(atomic.Int32), new(atomic.Int32)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen := r.URL.RawQuery + fmt.Sprint(r.Header)
+		if strings.Contains(seen, secret) {
+			leaks.Add(1)
+		}
+		if strings.Contains(seen, own) {
+			owns.Add(1)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`)) //nolint:errcheck // httptest local
+	}))
+	t.Cleanup(srv.Close)
+	for _, p := range []*string{&braveSearchURL, &serperSearchURL, &serpapiSearchURL, &exaSearchURL} {
+		old := *p
+		*p = srv.URL
+		t.Cleanup(func() { *p = old })
+	}
+	return leaks, owns
+}
+
+// blankShellKeys: this shell exports real provider keys — blank every
+// specific variable before anything resolves, or a real key reads through
+// (or leaks to a loopback vendor).
+func blankShellKeys(t *testing.T) {
+	t.Helper()
+	keyring.MockInit()
+	for _, v := range []string{"OPENAI", "ANTHROPIC", "OPENROUTER", "OPENCODE_GO", "OPENCODE_ZEN", "BRAVE", "SERPER", "SERPAPI", "EXA"} {
+		t.Setenv("MAGPIE_"+v+"_API_KEY", "")
+	}
+	t.Setenv("MAGPIE_API_KEY", "")
+}
+
+// TestSearch_GenericKeyNeverSent (QA ST9 + S2b N1): the generic
+// MAGPIE_API_KEY and the --api-key flag are LLM keys. No search vendor ever
+// receives them — not as a header (brave, serper, exa), not in a query
+// string (serpapi). Vacuity: the same resolver still hands the generic key
+// to an LLM provider, and a vendor's own variable still reaches the vendor,
+// so the zero leaks aren't a dead server.
+func TestSearch_GenericKeyNeverSent(t *testing.T) {
+	blankShellKeys(t)
+	const secret, own = "generic-SECRET-key", "brave-own-key"
+	leaks, owns := secretSink(t, secret, own)
+
+	legs := map[string]func(t *testing.T) config.Config{
+		"generic env": func(t *testing.T) config.Config {
+			t.Setenv("MAGPIE_API_KEY", secret)
+			return config.DefaultConfig()
+		},
+		"api-key flag": func(_ *testing.T) config.Config { // decision E2
+			c := config.DefaultConfig()
+			c.APIKeyFlag = secret
+			return c
+		},
+	}
+	for name, leg := range legs {
+		t.Run(name, func(t *testing.T) {
+			cfg := leg(t)
+			for _, engine := range []string{"brave", "serper", "serpapi", "exa"} {
+				_, err := Search(context.Background(), Deps{APIKeyFor: cfg.APIKey}, "widgets", SearchOptions{Provider: engine})
+				if !errors.Is(err, ErrMissingKey) {
+					t.Errorf("%s: err = %v, want ErrMissingKey (no key of its own)", engine, err)
+				}
+			}
+			if got := cfg.APIKey("openai"); got != secret {
+				t.Errorf("APIKey(openai) = %q, want the generic key: LLM providers keep the fallback", got)
+			}
+		})
+	}
+	if n := leaks.Load(); n != 0 {
+		t.Fatalf("the generic key reached a search vendor %d time(s)", n)
+	}
+
+	// Vacuity: the sink is live and reads keys — a vendor's own variable arrives.
+	t.Setenv("MAGPIE_BRAVE_API_KEY", own)
+	if _, err := Search(context.Background(), Deps{APIKeyFor: config.DefaultConfig().APIKey}, "widgets", SearchOptions{Provider: "brave"}); errors.Is(err, ErrMissingKey) {
+		t.Fatalf("brave with its own key: %v", err)
+	}
+	if owns.Load() == 0 {
+		t.Fatal("brave's own key never reached the sink — the leak count above proves nothing")
+	}
+}
+
+// TestSearch_KeyNeverInError (S2b N2): a transport error never prints the
+// request URL — SerpAPI carries its key in the query string.
+func TestSearch_KeyNeverInError(t *testing.T) {
+	blankShellKeys(t)
+	t.Setenv("MAGPIE_SERPAPI_API_KEY", "serpapi-SECRET-key")
+	old := serpapiSearchURL
+	serpapiSearchURL = "http://127.0.0.1:1/search"
+	t.Cleanup(func() { serpapiSearchURL = old })
+	_, err := Search(context.Background(), Deps{APIKeyFor: config.DefaultConfig().APIKey}, "q", SearchOptions{Provider: "serpapi"})
+	if err == nil {
+		t.Fatal("err = nil, want the refused connection") // vacuity: the key was sent toward a dead port
+	}
+	if strings.Contains(err.Error(), "SECRET") {
+		t.Errorf("error leaks the key: %v", err)
 	}
 }

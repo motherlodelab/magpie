@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/zalando/go-keyring"
@@ -401,16 +402,29 @@ func keyEnvName(provider string) string {
 	return strings.ToUpper(strings.ReplaceAll(provider, "-", "_"))
 }
 
-// APIKey resolves flag > env > keyring > (no file keys; returns "" when absent).
+// llmProviders are the names the generic key tiers (--api-key,
+// MAGPIE_API_KEY) may reach — an allowlist, so a new non-LLM slot fails
+// closed. config is a leaf and can't import extract: cli's
+// TestLLMProvidersMatchExtract keeps this in step with extract.ProviderNames().
+var llmProviders = []string{"anthropic", "openai", "ollama", "openrouter", "codex", "opencode-go", "opencode-zen"}
+
+// LLMProviders returns a copy of the generic key's allowlist.
+func LLMProviders() []string { return slices.Clone(llmProviders) }
+
+func isLLM(provider string) bool { return slices.Contains(llmProviders, strings.ToLower(provider)) }
+
+// APIKey resolves flag (LLM providers) > MAGPIE_<P>_API_KEY > MAGPIE_API_KEY
+// (LLM providers) > keyring; no file keys, "" when absent. The generic
+// tiers are LLM keys: they never reach a search vendor (QA ST9, S2b N1).
 func (c Config) APIKey(provider string) string {
-	if c.APIKeyFlag != "" {
+	if c.APIKeyFlag != "" && isLLM(provider) {
 		return c.APIKeyFlag
 	}
-	p := keyEnvName(provider)
-	for _, name := range []string{"MAGPIE_" + p + "_API_KEY", "MAGPIE_API_KEY"} {
-		if v := os.Getenv(name); v != "" {
-			return v
-		}
+	if v := os.Getenv("MAGPIE_" + keyEnvName(provider) + "_API_KEY"); v != "" {
+		return v
+	}
+	if v := os.Getenv("MAGPIE_API_KEY"); v != "" && isLLM(provider) {
+		return v
 	}
 	if k, err := keyring.Get(keyringService, strings.ToLower(provider)); err == nil && k != "" {
 		return k

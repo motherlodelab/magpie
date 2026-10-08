@@ -10,6 +10,7 @@ package scrape
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -188,6 +189,10 @@ func Search(ctx context.Context, d Deps, query string, o SearchOptions) ([]Searc
 func searchJSON(ctx context.Context, req *http.Request, c *http.Client, out any) error {
 	resp, err := c.Do(req.WithContext(ctx))
 	if err != nil {
+		var ue *url.Error
+		if errors.As(err, &ue) { // S2b N2: the URL carries SerpAPI's api_key — never print it
+			return fmt.Errorf("%s: %w", ue.Op, ue.Err)
+		}
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // body fully read below

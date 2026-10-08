@@ -3,8 +3,10 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/motherlodelab/magpie/scrape"
 
@@ -43,8 +45,11 @@ func runSearch(ctx context.Context, query, provider string, limit, scrapeTop int
 	records, err := scrape.Search(ctx, scrapeDeps(db, cfg), query, scrape.SearchOptions{
 		Provider: provider, Limit: limit, ScrapeTop: scrapeTop,
 	})
+	if errors.Is(err, scrape.ErrMissingKey) { // QA ST9: --api-key and MAGPIE_API_KEY are LLM keys — name the engine's own
+		return fmt.Errorf("%w: set MAGPIE_%s_API_KEY or `magpie config set-key %s`", err, strings.ToUpper(provider), provider)
+	}
 	if err != nil {
-		return keyHint(err) // exitFor owns the code mapping (missing key → 7)
+		return err // exitFor owns the code mapping (missing key → 7)
 	}
 	f := os.Stdout
 	if out != "" {
