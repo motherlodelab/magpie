@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/motherlodelab/magpie/store"
 )
 
 // sitemapOnlyOrigin is newSiteOrigin plus a robots-declared sitemap whose
@@ -126,12 +128,37 @@ func TestSitemapOnly_ExpansionErrorFatal(t *testing.T) {
 	// robots advertises /missing.xml which 404s.
 	o := newSitemapOnlyOrigin(t, "User-agent: *\nDisallow:\nSitemap: /missing.xml\n",
 		map[string]string{"/": itemPage()})
-	_, err := sitemapOnlyRun(t, o, nil)
+	var db *store.DB
+	_, err := sitemapOnlyRun(t, o, func(opts *Options) { db, opts.RunID = opts.DB, "fatal" })
 	if err == nil {
 		t.Fatal("expansion error must be fatal in sitemap-only mode")
 	}
 	if errors.Is(err, ErrSitemapOnlyEmpty) {
 		t.Errorf("err = %v, want the underlying expansion error (not the empty sentinel)", err)
+	}
+	// QA B3: a fatal error after the row opened must never leave it `running`.
+	if r, gerr := db.GetRun("fatal"); gerr != nil || r.Status != "error" {
+		t.Errorf("run row = %q (%v), want status error", r.Status, gerr)
+	}
+}
+
+// TestRun_CanceledBeforeSeed — QA B3: a Stop that lands before the seed's
+// robots fetch is an interruption, never `robots_blocked`, never `running`.
+func TestRun_CanceledBeforeSeed(t *testing.T) {
+	o := newSitemapOnlyOrigin(t, allowAllRobots, map[string]string{"/": itemPage()})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	db := openCrawlDB(t)
+	_, err := Run(ctx, Options{
+		SeedURL: o.srv.URL + "/", Schema: mustTestSchema(t), RunID: "stopped",
+		Format: "jsonl", Out: filepath.Join(t.TempDir(), "r.jsonl"), DB: db,
+		Extractor: &fakeExtractor{script: map[string]map[string]any{"default": crawlTruth}},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want context.Canceled", err)
+	}
+	if r, gerr := db.GetRun("stopped"); gerr != nil || r.Status != "interrupted" {
+		t.Errorf("run row = %q (%v), want status interrupted", r.Status, gerr)
 	}
 }
 

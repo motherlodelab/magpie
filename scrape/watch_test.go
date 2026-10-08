@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -82,6 +83,42 @@ func (w *watchFetcher) Close() error                      { return nil }
 func pricePage(price string) string {
 	return "<html><head><title>Price Watch</title></head><body><p>The price is " + price +
 		" dollars today. " + strings.Repeat("Honest filler prose keeps the gate satisfied. ", 8) + "</p></body></html>"
+}
+
+// TestWatch_TooLargeStillBaselines — QA W1: a change wider than the diff
+// window is still a change. It used to error before PutSnapshot, so the
+// old baseline stuck and every later check failed the same way.
+func TestWatch_TooLargeStillBaselines(t *testing.T) {
+	page := func(prefix string) string {
+		words := make([]string, 2100)
+		for i := range words {
+			words[i] = fmt.Sprintf("%s%d", prefix, i)
+		}
+		return "<html><head><title>Big Watch</title></head><body><p>" + strings.Join(words, " ") + "</p></body></html>"
+	}
+	db := openScrapeDB(t)
+	wf := &watchFetcher{body: page("a")}
+	deps := scrape.Deps{DB: db, Fetcher: wf}
+	url := "https://shop.example.com/big"
+	check := func() scrape.WatchResult {
+		t.Helper()
+		res, err := scrape.CheckForChange(context.Background(), deps, url, scrape.Options{Render: "static"})
+		if err != nil {
+			t.Fatalf("check: %v", err)
+		}
+		return res
+	}
+	check() // baseline
+	wf.set(page("b"))
+	if res := check(); !res.Changed || !strings.Contains(res.Diff, "too large") {
+		t.Errorf("too-large change = changed %v, diff %q; want changed with a too-large note", res.Changed, res.Diff)
+	}
+	if n, err := db.TableCount("snapshots"); err != nil || n != 2 {
+		t.Errorf("snapshot rows = %d (%v), want 2: the change must become the baseline", n, err)
+	}
+	if res := check(); res.Changed {
+		t.Errorf("same body after a too-large change reported changed: the baseline did not move")
+	}
 }
 
 func TestWatch_BaselineThenChange(t *testing.T) {

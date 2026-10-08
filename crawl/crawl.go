@@ -127,6 +127,9 @@ type crawlContext struct {
 	// proxy is the validated per-run egress (opts.Proxy), wired into
 	// the checker at begin(); nil when unset.
 	proxy *url.URL
+	// opened: begin() created or resumed the run row, so Run owns its
+	// terminal status from here on.
+	opened bool
 
 	outstanding atomic.Int64
 
@@ -137,11 +140,38 @@ type crawlContext struct {
 }
 
 // Run executes a crawl: seed/resume → pump + pipeline → writer → FinishRun.
-func Run(ctx context.Context, opts Options) (Result, error) {
+func Run(ctx context.Context, opts Options) (_ Result, err error) {
 	cc, err := newCrawlContext(opts)
 	if err != nil {
 		return Result{}, err
 	}
+	// QA B3: once the row is open, no error return may leave it `running`
+	// (begin's resume tail, seed's sitemap/frontier errors, newWriter).
+	// Paths that already finished it (robots_blocked, finish) are kept.
+	defer func() {
+		if err == nil || !cc.opened {
+			return
+		}
+		r, gerr := cc.db.GetRun(cc.runID)
+		if gerr != nil {
+			fmt.Fprintf(os.Stderr, "warning: finish guard: read run: %v\n", gerr)
+			return
+		}
+		if r.Status != "running" {
+			return
+		}
+		status := "error"
+		if ctx.Err() != nil {
+			status = "interrupted"
+		}
+		_, _, done, errs, serr := cc.db.CrawlStats(cc.runID)
+		if serr != nil { // zero counts then: the status is what matters
+			fmt.Fprintf(os.Stderr, "warning: crawl stats: %v\n", serr)
+		}
+		if ferr := cc.db.FinishRun(cc.runID, done, errs, status); ferr != nil {
+			fmt.Fprintf(os.Stderr, "warning: finish run: %v\n", ferr)
+		}
+	}()
 	if err := cc.begin(); err != nil {
 		return Result{}, err
 	}
@@ -246,6 +276,7 @@ func (c *crawlContext) begin() error {
 			return err
 		}
 	}
+	c.opened = true
 
 	c.checker = NewChecker()
 	// Validated in newCrawlContext (pre-I/O); robots fetches ride the

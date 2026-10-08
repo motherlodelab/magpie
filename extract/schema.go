@@ -3,6 +3,7 @@ package extract
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -38,6 +39,20 @@ func LoadSchema(path string) (*Schema, error) {
 	return ParseSchema(data)
 }
 
+var errExternalRef = errors.New("magpie doesn't load other files or URLs")
+
+// noExternalRefs refuses every external $ref (D1): a schema is untrusted
+// input (desktop renderer, MCP inline schema), and the default loader reads
+// local files. Internal "#/..." refs and the draft metaschemas never get here.
+type noExternalRefs struct{}
+
+// Load receives the RESOLVED url (a relative ref arrives as file:///<cwd>/…).
+func (noExternalRefs) Load(u string) (any, error) {
+	return nil, fmt.Errorf("schema $ref %q points outside this schema — %w.\n"+
+		"Fix: copy that definition into this schema under \"$defs\" (e.g. \"$defs\": {\"money\": {...}}) "+
+		"and point to it with \"$ref\": \"#/$defs/money\"", u, errExternalRef)
+}
+
 // ParseSchema parses in-memory schema bytes (YAML or JSON).
 func ParseSchema(data []byte) (*Schema, error) {
 	var v any
@@ -50,11 +65,18 @@ func ParseSchema(data []byte) (*Schema, error) {
 		return nil, fmt.Errorf("extract: marshal schema: %w", err)
 	}
 	c := jsonschema.NewCompiler()
+	c.UseLoader(noExternalRefs{})
 	if err := c.AddResource("schema.json", v); err != nil {
 		return nil, fmt.Errorf("extract: add schema: %w", err)
 	}
 	sch, err := c.Compile("schema.json")
 	if err != nil {
+		// LoadURLError has no Unwrap: surface the refusal alone so its fix
+		// line isn't buried under the compiler's "failing loading" wrapper.
+		var le *jsonschema.LoadURLError
+		if errors.As(err, &le) && errors.Is(le.Err, errExternalRef) {
+			return nil, fmt.Errorf("extract: %w", le.Err)
+		}
 		return nil, fmt.Errorf("extract: compile schema: %w", err)
 	}
 	s := &Schema{Raw: v, Validator: sch, Hints: FieldHints{

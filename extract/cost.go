@@ -33,16 +33,24 @@ func EstimateCost(model string, prompt, completion int) float64 {
 }
 
 // CostFor resolves one call's USD: provider-reported cost (OpenRouter
-// usage.cost) wins; flat-rate providers stay 0 quietly (fixed bill, noise
-// is not signal); otherwise the price table, warning when unknown.
+// usage.cost) wins; flat-rate and keyless (local) providers stay 0 quietly
+// (fixed bill / no bill); otherwise the price table, and a metered model
+// missing from it books a fallback rate, warning.
 func CostFor(provider, model string, u TokenUsage) float64 {
 	if u.USDEstimate != 0 {
 		return u.USDEstimate
 	}
-	if IsFlatRateProvider(provider) {
+	if IsFlatRateProvider(provider) || !NeedsAPIKey(provider) {
 		return 0
 	}
-	return EstimateCost(model, u.PromptTokens, u.CompletionTokens)
+	if c, known := costLookup(model, u.PromptTokens, u.CompletionTokens); known {
+		return c
+	}
+	// QA R1: booking 0 let an unpriced model spend past every cap and budget.
+	// ponytail: $2 in / $10 out per 1M (~0.9× gpt-4o, ~0.67× claude-sonnet-4-5)
+	// under-counts Opus-class models; the upgrade is a priceTable row.
+	fmt.Fprintf(os.Stderr, "warning: unpriced model %q, booking $2 in / $10 out per 1M tokens\n", model)
+	return float64(u.PromptTokens)/1e6*2 + float64(u.CompletionTokens)/1e6*10
 }
 
 func costLookup(model string, prompt, completion int) (float64, bool) {
@@ -106,5 +114,6 @@ func ProjectedCostWithFallback(model, promptText string) float64 {
 
 func isFreeModel(model string) bool {
 	m := strings.ToLower(model)
-	return strings.HasPrefix(m, "ollama/") || strings.HasPrefix(m, "llama")
+	return strings.HasPrefix(m, "ollama/") || strings.HasPrefix(m, "llama") ||
+		strings.HasSuffix(m, ":free") // OpenRouter free tier: reported cost 0 must not fall through to the fallback
 }

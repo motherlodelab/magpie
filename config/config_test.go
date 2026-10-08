@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -349,5 +350,49 @@ func TestSaveExporterCmd(t *testing.T) {
 	}
 	if cfg, err := config.Load(path); err != nil || cfg.ExporterCmd != "" {
 		t.Errorf("clear: Load = %q, %v; want empty", cfg.ExporterCmd, err)
+	}
+}
+
+// TestSave_AtomicKeepsModeAndLink — QA ST4: Save replaces config.yaml via
+// temp + rename (a crash leaves the old file or the new one, never half),
+// keeps a hand-set mode, and writes through a dotfiles symlink.
+func TestSave_AtomicKeepsModeAndLink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix perms + symlinks")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "dotfiles", "config.yaml")
+	link := filepath.Join(dir, "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("model: old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := errors.Join(os.Chmod(target, 0o640), os.Symlink(target, link)); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Save(link, func(c *config.Config) error { c.Model = "new"; return nil }); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	after, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(before, after) {
+		t.Error("config.yaml was rewritten in place, want temp + rename")
+	}
+	if after.Mode().Perm() != 0o640 {
+		t.Errorf("mode = %v, want the existing 0640 kept", after.Mode().Perm())
+	}
+	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the symlink was replaced by a regular file (%v)", err)
+	}
+	if b, err := os.ReadFile(target); err != nil || !strings.Contains(string(b), "model: new") {
+		t.Errorf("target = %q, want model: new", b)
 	}
 }

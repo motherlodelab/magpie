@@ -21,6 +21,9 @@ func (c *crawlContext) seed(ctx context.Context) error {
 	}
 	if isHTTP(c.opts.SeedURL) && !c.opts.IgnoreRobots {
 		allowed, err := c.checker.Allowed(ctx, c.opts.SeedURL)
+		if ctx.Err() != nil { // QA B3: a Stop before or during the robots fetch is an interruption, not a block
+			return ctx.Err()
+		}
 		if err != nil || !allowed {
 			if ferr := c.db.FinishRun(c.runID, 0, 0, "robots_blocked"); ferr != nil {
 				fmt.Fprintf(os.Stderr, "warning: finish run: %v\n", ferr)
