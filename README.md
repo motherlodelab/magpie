@@ -49,7 +49,10 @@ scoped crawling · zero-LLM verticals · 12-tool MCP server · WASM plugins.
 
 - **Go 1.26+** (single static binary, no CGO, no runtime dependencies)
 - **Chrome/Chromium** — only for `--render browser`, screenshots, and
-  the `browser` test tag; everything else is pure Go
+  the `browser` test tag; everything else is pure Go. An installed
+  Chrome, Chromium or Edge is used first (a snap Chromium is skipped: its
+  confinement can't read the temp profile); with none installed, rod
+  downloads a pinned Chromium (~150 MB) into `~/.cache/rod` on first use
 - **API key** — only for LLM extraction or BYOK search providers;
   cleaning, mapping, crawling, verticals, and brand detection need none
 
@@ -481,9 +484,17 @@ Available on **every** command:
 | `--max-cost` | USD cost ceiling — abort before exceeding (flat-rate `codex`, `opencode-go` exempt) |
 | `--proxy-file` | Proxy pool file (sugar over `MAGPIE_PROXY_FILE`; overrides `MAGPIE_PROXY`) |
 | `--config` | Config file path |
-| `--cache-db` | SQLite cache DB path |
+| `--cache-db` | SQLite cache DB path (default below) |
 
 Shell completion: `magpie completion bash|zsh|fish|powershell`.
+
+**Where data lives.** History, snapshots, research runs and `records/` sit in
+one store, `cache.db`. New installs put it in the OS's data dir:
+`$XDG_DATA_HOME/magpie` (default `~/.local/share/magpie`) on Linux,
+`~/Library/Application Support/magpie` on macOS, `%LOCALAPPDATA%\magpie` on
+Windows. An existing store under `~/.cache/magpie` (pre-v0.1.30) keeps
+working where it is — it is never moved. `cache_db` in `config.yaml`,
+`MAGPIE_CACHE_DB` or `--cache-db` choose another path.
 
 ### Environment variables
 
@@ -802,4 +813,4 @@ Contributions are welcome under the same terms — see
 
 ## Last Updated
 
-This README was last updated on 2026-10-05.
+This README was last updated on 2026-10-08.

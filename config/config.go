@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -65,7 +66,23 @@ func DefaultConfigPath() string {
 	return filepath.Join(DefaultConfigDir(), "config.yaml")
 }
 
+// DefaultDBPath is where history, snapshots and records live. An existing
+// store under the cache dir keeps working (it is never moved — QA §4: a move
+// races the CLI and loses WAL/records on a cross-volume rename); a new
+// install gets the OS's data dir, which cache cleaners leave alone.
 func DefaultDBPath() string {
+	legacy := legacyDBPath()
+	if _, err := os.Stat(legacy); err == nil {
+		return legacy
+	}
+	if d := dataDir(); d != "" {
+		return filepath.Join(d, "magpie", "cache.db")
+	}
+	return legacy
+}
+
+// legacyDBPath is the pre-v0.1.30 location on every OS.
+func legacyDBPath() string {
 	if v := os.Getenv("XDG_CACHE_HOME"); v != "" {
 		return filepath.Join(v, "magpie", "cache.db")
 	}
@@ -73,6 +90,33 @@ func DefaultDBPath() string {
 		return filepath.Join(h, ".cache", "magpie", "cache.db")
 	}
 	return filepath.Join(".", "cache.db")
+}
+
+// dataDir is the per-user, non-roaming data dir ("" when unknown): a
+// multi-GB store must not roam (Windows) or sit where cleaners look.
+func dataDir() string {
+	switch runtime.GOOS {
+	case "darwin":
+		if d, err := os.UserConfigDir(); err == nil { // ~/Library/Application Support
+			return d
+		}
+		return ""
+	case "windows":
+		if v := os.Getenv("LOCALAPPDATA"); v != "" {
+			return v
+		}
+		if d, err := os.UserCacheDir(); err == nil { // %LocalAppData% too
+			return d
+		}
+		return ""
+	}
+	if v := os.Getenv("XDG_DATA_HOME"); v != "" {
+		return v
+	}
+	if h, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(h, ".local", "share")
+	}
+	return ""
 }
 
 func DefaultModel(provider string) string {

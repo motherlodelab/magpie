@@ -143,6 +143,7 @@ func testEnv(t *testing.T, dbName string) string {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("XDG_CACHE_HOME", dir)
+	t.Setenv("XDG_DATA_HOME", dir)
 	t.Setenv("APPDATA", "")
 	db := filepath.Join(dir, dbName)
 	t.Setenv("MAGPIE_CACHE_DB", db)
