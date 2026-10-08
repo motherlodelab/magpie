@@ -188,8 +188,9 @@ type run struct {
 // crawl.ErrCostCeiling; facts are kept, so a resume can write later). A
 // Job.RunID naming an unfinished research run resumes it: the stored
 // question, plan (no scope call) and options — only a higher MaxCostUSD
-// from the caller wins, so a run its cap stopped can be resumed to write —
-// the ledger so far, no page re-read, spend and reads cumulative.
+// from the caller wins and is stored, so a run its cap stopped can be
+// resumed to write — the ledger so far, no page re-read, spend and reads
+// cumulative.
 // ponytail: issued queries, searches, replanned angles and pivot
 // bookkeeping aren't persisted — a resume may re-issue a query (and its
 // searches aren't counted against MaxToolCalls), and a pivotal fact keeps
@@ -237,6 +238,13 @@ func Run(ctx context.Context, d scrape.Deps, j Job) (rep Report, err error) {
 			return rep, err
 		}
 		if err = d.DB.SetResearchState(r.id, "running", rr.Steer); err != nil {
+			return rep, err
+		}
+		optsJSON, oerr := json.Marshal(r.o)
+		if oerr != nil {
+			return rep, oerr
+		}
+		if err = d.DB.SetResearchOptions(r.id, string(optsJSON)); err != nil { // QA R9: the raised cap is the run's cap from here on
 			return rep, err
 		}
 	} else {
@@ -347,10 +355,11 @@ func prepare(d scrape.Deps, j Job, question string) (*run, error) {
 
 // backends is the run's search fan-out. Unnamed, it is the keyless
 // backends only (duckduckgo, and searxng when MAGPIE_SEARXNG_URL is set):
-// a keyed backend must be asked for, because a key resolver may fall back
-// to a generic key (--api-key, MAGPIE_API_KEY) that is the LLM's, and a
-// default fan-out would send it to every SERP vendor. Named backends must
-// be usable: a keyed one needs its key, searxng its URL.
+// a keyed backend must be asked for, so a run never spends a SERP vendor
+// the caller didn't name. (config.APIKey no longer hands a vendor the
+// generic --api-key/MAGPIE_API_KEY — QA ST9 — but a caller's own resolver
+// may.) Named backends must be usable: a keyed one needs its key, searxng
+// its URL.
 func backends(o Options, keyFor func(string) string) ([]string, error) {
 	if len(o.Search) == 0 {
 		return scrape.SearchProvidersFor(nil), nil

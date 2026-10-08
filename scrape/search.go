@@ -10,6 +10,7 @@ package scrape
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -188,6 +189,10 @@ func Search(ctx context.Context, d Deps, query string, o SearchOptions) ([]Searc
 func searchJSON(ctx context.Context, req *http.Request, c *http.Client, out any) error {
 	resp, err := c.Do(req.WithContext(ctx))
 	if err != nil {
+		var ue *url.Error
+		if errors.As(err, &ue) { // S2b N2: the URL carries SerpAPI's api_key — never print it
+			return fmt.Errorf("%s: %w", ue.Op, ue.Err)
+		}
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // body fully read below
@@ -405,7 +410,9 @@ func searchDuckDuckGo(ctx context.Context, c *http.Client, query string, limit i
 	return hits, nil
 }
 
-// ddgDecodeHref unwraps //duckduckgo.com/l/?uddg=<encoded> redirects.
+// ddgDecodeHref unwraps //duckduckgo.com/l/?uddg=<encoded> redirects and
+// drops ads ("" = skip the hit). The redirect target gets the same checks:
+// DDG serves its ads wrapped (/l/?uddg=…/y.js…, live 2026-10-08).
 func ddgDecodeHref(href string) string {
 	if strings.HasPrefix(href, "//") {
 		href = "https:" + href
@@ -417,8 +424,11 @@ func ddgDecodeHref(href string) string {
 	if u.Host != "" && u.Host != "duckduckgo.com" {
 		return href
 	}
+	if u.Path == "/y.js" { // ponytail: DDG's ad click-redirect as served 2026-10 (QA W7); a renamed ad path lets ads back in — re-record the fixture
+		return ""
+	}
 	if got := u.Query().Get("uddg"); got != "" {
-		return got
+		return ddgDecodeHref(got) // shorter each level: terminates
 	}
 	return href
 }

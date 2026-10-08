@@ -957,8 +957,8 @@ func TestSearchCmd_Validation(t *testing.T) {
 	if codeOf(err) != 7 {
 		t.Errorf("missing-key exit = %d, want 7 (err=%v)", codeOf(err), err)
 	}
-	if !strings.Contains(stderr2, "api-key") {
-		t.Errorf("stderr = %q, want the set-key hint", stderr2)
+	if !strings.Contains(stderr2, "MAGPIE_BRAVE_API_KEY") || !strings.Contains(stderr2, "config set-key brave") {
+		t.Errorf("stderr = %q, want the engine's own key hint (QA ST9)", stderr2)
 	}
 	resetGlobals()
 

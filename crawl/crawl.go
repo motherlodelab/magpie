@@ -97,6 +97,7 @@ type Options struct {
 }
 
 // Result summarizes a finished crawl.
+// On error, the counts reached before the run stopped (QA C6).
 type Result struct {
 	RunID    string
 	PagesOK  int
@@ -422,29 +423,34 @@ func (c *crawlContext) finish(ctx context.Context, w *writer, sinkErr error, pum
 	if werr := w.close(); werr != nil && sinkErr == nil {
 		sinkErr = werr
 	}
+	// QA C6: an aborted run (cost ceiling, budget, sink) still reports the
+	// pages it finished — the stats are read before the error branches.
+	_, _, done, errs, serr := c.db.CrawlStats(c.runID)
+	if serr != nil {
+		if ferr := c.db.FinishRun(c.runID, 0, 0, "error"); ferr != nil {
+			fmt.Fprintf(os.Stderr, "warning: finish run: %v\n", ferr)
+		}
+		return Result{RunID: c.runID}, serr
+	}
+	res := Result{RunID: c.runID, PagesOK: done, PagesErr: errs, Records: w.count()}
 	finishWarn := func(status string) {
-		if ferr := c.db.FinishRun(c.runID, 0, 0, status); ferr != nil {
+		if ferr := c.db.FinishRun(c.runID, done, errs, status); ferr != nil {
 			fmt.Fprintf(os.Stderr, "warning: finish run: %v\n", ferr)
 		}
 	}
 	if sinkErr != nil {
 		finishWarn("error")
-		return Result{RunID: c.runID}, sinkErr
+		return res, sinkErr
 	}
 	if pumpErr != nil {
 		finishWarn("error")
-		return Result{RunID: c.runID}, pumpErr
+		return res, pumpErr
 	}
 	if runErr != nil && !errors.Is(runErr, context.Canceled) {
 		finishWarn("error")
-		return Result{RunID: c.runID}, runErr
+		return res, runErr
 	}
 
-	_, _, done, errs, serr := c.db.CrawlStats(c.runID)
-	if serr != nil {
-		finishWarn("error")
-		return Result{RunID: c.runID}, serr
-	}
 	status := "finished"
 	if ctx.Err() != nil || (runErr != nil && errors.Is(runErr, context.Canceled)) {
 		status = "interrupted"
@@ -452,7 +458,7 @@ func (c *crawlContext) finish(ctx context.Context, w *writer, sinkErr error, pum
 	if ferr := c.db.FinishRun(c.runID, done, errs, status); ferr != nil {
 		return Result{RunID: c.runID}, ferr
 	}
-	return Result{RunID: c.runID, PagesOK: done, PagesErr: errs, Records: w.count()}, nil
+	return res, nil
 }
 
 func domainOf(rawURL string) string {

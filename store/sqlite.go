@@ -368,9 +368,13 @@ func (d *DB) GetRun(runID string) (RunInfo, error) {
 // ListRuns returns up to limit recent runs, newest first. started_at has
 // second granularity (RFC3339), so rowid (insertion order) breaks ties —
 // same-second runs still sort deterministically. Feeds the desktop
-// History screen; limit <= 0 means all.
+// History screen; limit <= 0 means all. Watch checks (command "watch")
+// never take a page: a check is not a run (QA ST8/C13) — GetRun still
+// reads them.
+// ponytail: the WHERE scans run_history in full (no index). Upgrade at
+// ~10^6 rows: an index on started_at, or pruning watch rows.
 func (d *DB) ListRuns(limit int) ([]RunInfo, error) {
-	q := `SELECT ` + runCols + ` FROM run_history ORDER BY started_at DESC, rowid DESC`
+	q := `SELECT ` + runCols + ` FROM run_history WHERE command != 'watch' ORDER BY started_at DESC, rowid DESC`
 	if limit > 0 {
 		q += fmt.Sprintf(" LIMIT %d", limit)
 	}

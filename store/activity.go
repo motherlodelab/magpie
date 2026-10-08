@@ -22,14 +22,15 @@ type ActivityRow struct {
 // Activity sums runs started at or after since, by day in the caller's
 // zone (offset = its UTC offset) × command × status, oldest day first.
 // started_at is RFC3339 UTC everywhere (BeginRun), so the since filter is
-// a string compare. Feeds the desktop Overview chart (D7).
+// a string compare. Watch checks are not runs and are skipped (QA ST8).
+// Feeds the desktop Overview chart (D7).
 // ponytail: one offset for the whole window — a run within an hour of a
 // DST switch can land on the neighbouring day. Upgrade: per-day bounds.
 func (d *DB) Activity(since time.Time, offset time.Duration) ([]ActivityRow, error) {
 	mod := fmt.Sprintf("%+d minutes", int(offset/time.Minute))
 	rows, err := d.db.Query(`SELECT date(started_at, ?) AS day, command, status, COUNT(*),
 		SUM(pages_ok), SUM(pages_err), SUM(prompt_tokens), SUM(completion_tokens), SUM(usd_estimate)
-		FROM run_history WHERE started_at >= ?
+		FROM run_history WHERE started_at >= ? AND command != 'watch'
 		GROUP BY day, command, status ORDER BY day, command, status`,
 		mod, since.UTC().Format(time.RFC3339))
 	if err != nil {

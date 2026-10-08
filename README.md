@@ -97,7 +97,9 @@ MAGPIE_EXTRACT_PROVIDER=ollama ./magpie config show
 ```
 
 API keys resolve as: `--api-key` flag > `MAGPIE_<PROVIDER>_API_KEY` env >
-OS keyring > config file.
+`MAGPIE_API_KEY` > OS keyring > config file. The flag and `MAGPIE_API_KEY`
+are LLM keys: they apply to LLM providers only and never reach a search
+engine, which needs its own `MAGPIE_<ENGINE>_API_KEY` or keyring entry.
 (Dashes become underscores: `opencode-go` → `MAGPIE_OPENCODE_GO_API_KEY`.)
 
 **Common use-cases:**
@@ -376,8 +378,10 @@ magpie search "launch" --scrape-top 3 --out results.jsonl  # scrape first 3 hits
 | `--out` | path (default stdout) | Write hits to a file |
 
 BYOK keys: `MAGPIE_BRAVE_API_KEY`, `MAGPIE_SERPER_API_KEY`,
-`MAGPIE_SERPAPI_API_KEY`, `MAGPIE_EXA_API_KEY`; searxng needs only
-`MAGPIE_SEARXNG_URL`. Missing keys exit 7 with the set-key hint.
+`MAGPIE_SERPAPI_API_KEY`, `MAGPIE_EXA_API_KEY` (or `magpie config set-key
+<engine>`); `--api-key` and `MAGPIE_API_KEY` never reach a search engine.
+searxng needs only `MAGPIE_SEARXNG_URL`. Missing keys exit 7 with the
+engine's own key hint.
 
 #### `magpie research "<question>"` — deep research with verified citations
 
@@ -473,7 +477,7 @@ Available on **every** command:
 
 | Flag | Action |
 | :-- | :-- |
-| `--api-key` | Provider API key (overrides env/keyring) |
+| `--api-key` | LLM provider API key (overrides env/keyring; never sent to a search engine) |
 | `--max-cost` | USD cost ceiling — abort before exceeding (flat-rate `codex`, `opencode-go` exempt) |
 | `--proxy-file` | Proxy pool file (sugar over `MAGPIE_PROXY_FILE`; overrides `MAGPIE_PROXY`) |
 | `--config` | Config file path |
@@ -486,6 +490,7 @@ Shell completion: `magpie completion bash|zsh|fish|powershell`.
 | Variable | Action |
 | :-- | :-- |
 | `MAGPIE_<PROVIDER>_API_KEY` | Key per provider, e.g. `MAGPIE_OPENAI_API_KEY`, `MAGPIE_ANTHROPIC_API_KEY`, `MAGPIE_OPENROUTER_API_KEY`, `MAGPIE_BRAVE_API_KEY`, `MAGPIE_SERPER_API_KEY`, `MAGPIE_SERPAPI_API_KEY`, `MAGPIE_EXA_API_KEY`, `MAGPIE_OPENCODE_GO_API_KEY`, `MAGPIE_OPENCODE_ZEN_API_KEY` (dashes → underscores) |
+| `MAGPIE_API_KEY` | Fallback key for LLM providers only — search engines need `MAGPIE_<ENGINE>_API_KEY` |
 | `MAGPIE_EXTRACT_PROVIDER` / `MAGPIE_PROVIDER` | Default LLM provider |
 | `MAGPIE_MODEL` | Default model |
 | `MAGPIE_MAX_COST` | Default USD cost ceiling |
@@ -503,8 +508,9 @@ Shell completion: `magpie completion bash|zsh|fish|powershell`.
 | `MAGPIE_STRICT_SSRF` | Stricter SSRF posture when set |
 | Standard `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` | Honored unless the MAGPIE proxy settings override/bypass |
 
-API keys resolve as: `--api-key` flag > `MAGPIE_<PROVIDER>_API_KEY`
-env > OS keyring > config file.
+API keys resolve as: `--api-key` flag (LLM providers) >
+`MAGPIE_<PROVIDER>_API_KEY` env > `MAGPIE_API_KEY` (LLM providers) > OS
+keyring > config file.
 
 ### Exit codes
 
@@ -592,6 +598,9 @@ Every fetch (static, robots, crawl) goes through one guarded transport:
 - **Run telemetry:** `run_history` rows accumulate `fetch_pages`,
   `fetch_bytes`, and `fetch_ms` next to LLM tokens/cost; databases created
   before Phase D gain the columns automatically on open.
+  A `watch` check records its row as `command='watch'`: a check is not a
+  run, so run listings and activity skip it (rows from before v0.1.29
+  stay `scrape`).
 - **Prompt-injection stripping (default-on):** hidden text — inline styles
   `display:none` / `visibility:hidden` / `font-size:0` / `opacity:0`, the
   `hidden` attribute, and HTML comments — is stripped from every cleaned
@@ -603,7 +612,11 @@ Every fetch (static, robots, crawl) goes through one guarded transport:
   fetches and screenshots) at a running Chrome/Chromium via CDP instead of
   launching one — farms and containers never pay the local download. Scheme
   must be `ws`/`wss`/`http(s)` (validated pre-I/O); endpoint credentials
-  never appear in errors.
+  never appear in errors. A per-run proxy (`scrape.Options.Proxy`) is
+  refused over CDP (the remote browser owns its egress), and the browser
+  path refuses a proxy with credentials (`user:pass`) — Chromium's
+  `--proxy-server` can't sign in; use an IP-allowlisted proxy for browser
+  renders, or render static.
 
 ### TLS impersonation
 

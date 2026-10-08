@@ -7,6 +7,7 @@ package fetch
 // ssrf_internal_test.go/utls_internal_test.go.
 
 import (
+	"context"
 	"errors"
 	"net"
 	"net/url"
@@ -15,6 +16,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/go-rod/rod/lib/launcher"
+	"github.com/go-rod/rod/lib/launcher/flags"
 )
 
 func TestParsePool(t *testing.T) {
@@ -406,5 +410,34 @@ func TestPool_FailoverMarksCooldown(t *testing.T) {
 	defer p.mu.Unlock()
 	if len(p.dead) != 2 {
 		t.Fatalf("cooldown map = %v, want BOTH entries marked by the real fetch path", p.dead)
+	}
+}
+
+// TestRod_AuthProxyRefused — QA S8 + S2b N4: --proxy-server has no
+// credential grammar, so the browser path refuses an authenticated proxy
+// (instead of a 407 later), and refuses a per-run proxy over CDP (instead
+// of silently dropping it). Chrome never starts: the launch seam points at
+// a missing binary, so a pre-fix run fails fast with fork/exec, and the
+// refusal must come before any launch. The error never echoes the password.
+func TestRod_AuthProxyRefused(t *testing.T) {
+	noChrome := func(l *launcher.Launcher) { l.Delete(flags.Leakless).Bin(filepath.Join(t.TempDir(), "no-chrome")) }
+	for _, c := range []struct{ name, proxy, cdp string }{
+		{"http userinfo", "http://alice:s3cret@127.0.0.1:1", ""},
+		{"pool line", "127.0.0.1:1:alice:s3cret", ""},
+		{"socks5 userinfo", "socks5://alice:s3cret@127.0.0.1:1", ""},
+		{"proxy over CDP", "http://127.0.0.1:2", "ws://127.0.0.1:1"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := NewRodFetcher()
+			r.Proxy, r.CDP, r.launch = c.proxy, c.cdp, noChrome
+			defer func() { _ = r.Close() }() //nolint:errcheck // nothing launched on the refused path
+			_, err := r.Fetch(context.Background(), FetchRequest{URL: "http://127.0.0.1:1/"})
+			if !errors.Is(err, ErrProxyConfig) {
+				t.Fatalf("err = %v, want ErrProxyConfig before any launch", err)
+			}
+			if strings.Contains(err.Error(), "s3cret") {
+				t.Errorf("error echoes the proxy password: %v", err)
+			}
+		})
 	}
 }

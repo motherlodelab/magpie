@@ -5,10 +5,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/motherlodelab/magpie/config"
+	"github.com/motherlodelab/magpie/extract"
 )
 
 func isolatedXDG(t *testing.T) string {
@@ -394,5 +396,17 @@ func TestSave_AtomicKeepsModeAndLink(t *testing.T) {
 	}
 	if b, err := os.ReadFile(target); err != nil || !strings.Contains(string(b), "model: new") {
 		t.Errorf("target = %q, want model: new", b)
+	}
+}
+
+// TestLLMProvidersMatchExtract (QA ST9): config is a leaf and keeps its own
+// copy of the LLM provider names (the generic key's allowlist); this drift
+// test, next to the list it guards (an external test package may import
+// extract), fails the day extract gains a provider config doesn't know.
+func TestLLMProvidersMatchExtract(t *testing.T) {
+	got := slices.Sorted(slices.Values(config.LLMProviders()))
+	want := slices.Sorted(slices.Values(extract.ProviderNames()))
+	if !slices.Equal(got, want) {
+		t.Errorf("config.LLMProviders() = %v, extract.ProviderNames() = %v: keep them in step", got, want)
 	}
 }

@@ -234,8 +234,16 @@ func resolveCDP(o Options) string {
 	return os.Getenv("MAGPIE_CDP_URL")
 }
 
-// Run fetches, cleans, and optionally extracts one URL.
+// Run fetches, cleans, and optionally extracts one URL. An extraction
+// failure after a clean fetch returns the page (no Record) with the error
+// (QA S9); a fetch or clean failure returns an empty Result (its RunID set).
 func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) {
+	return runAs(ctx, d, rawURL, o, "scrape")
+}
+
+// runAs is Run under a run_history command: "scrape", or "watch" for
+// CheckForChange — a check is not a run (QA ST8).
+func runAs(ctx context.Context, d Deps, rawURL string, o Options, command string) (Result, error) {
 	if d.DB == nil {
 		return Result{}, fmt.Errorf("scrape: nil DB")
 	}
@@ -253,7 +261,7 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 	runID, joined := o.RunID, o.RunID != ""
 	if !joined {
 		runID = store.NewRunID()
-		if err := d.DB.BeginRun(runID, "scrape"); err != nil {
+		if err := d.DB.BeginRun(runID, command); err != nil {
 			return Result{}, err
 		}
 	}
@@ -284,7 +292,12 @@ func run(ctx context.Context, d Deps, rawURL string, o Options, explicit *vertic
 	// (1,0,"finished"); missing-key and cost-ceiling aborts zero the error
 	// count (er=0) — config errors, not page errors.
 	ok, er, status := 0, 1, "error"
-	defer func() { finish(ok, er, status) }()
+	defer func() {
+		if status == "error" && ctx.Err() != nil { // QA S6: a cancel is not a failure (crawl's rule)
+			er, status = 0, "interrupted"
+		}
+		finish(ok, er, status)
+	}()
 	verticalDone := func(res Result, verr error) (Result, error) {
 		if verr == nil {
 			ok, er, status = 1, 0, "finished"
@@ -405,11 +418,11 @@ func run(ctx context.Context, d Deps, rawURL string, o Options, explicit *vertic
 	}
 	if key == "" && extract.NeedsAPIKey(provider) {
 		er = 0 // nothing was attempted — config error, not a page error
-		return Result{}, fmt.Errorf("scrape: provider %s: %w", provider, ErrMissingKey)
+		return base, fmt.Errorf("scrape: provider %s: %w", provider, ErrMissingKey)
 	}
 	ex, err := d.ExtractorFor(provider, key, model, o.Schema, runID)
 	if err != nil {
-		return Result{}, err
+		return base, err
 	}
 
 	// Selector cache: hit + all required fields non-null → 0 LLM calls.
@@ -427,14 +440,14 @@ func run(ctx context.Context, d Deps, rawURL string, o Options, explicit *vertic
 	promptText := "Extract structured data.\n" + string(cleaned.StructuredData) + "\n" + cleaned.Markdown
 	if err := CheckCostCeiling(d.DB, runID, provider, model, promptText, o.MaxCost); err != nil {
 		er = 0 // abort before any spend — not a page error
-		return Result{}, fmt.Errorf("scrape: %w", err)
+		return base, fmt.Errorf("scrape: %w", err)
 	}
 
 	res, err := ex.Extract(ctx, extract.ExtractInput{
 		Markdown: cleaned.Markdown, StructuredData: cleaned.StructuredData, Schema: o.Schema,
 	})
 	if err != nil {
-		return Result{}, err
+		return base, err
 	}
 	ok, er, status = 1, 0, "finished"
 	base.Record = res.Record
