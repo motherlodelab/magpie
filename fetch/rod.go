@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-rod/rod"
@@ -37,6 +38,9 @@ type RodFetcher struct {
 	lookup LookupFunc               // test seam: nil = the default resolver
 	launch func(*launcher.Launcher) // test seam: extra launch flags before Launch; nil = none
 }
+
+// lookPath finds an installed Chrome/Edge (a test seam over rod's list).
+var lookPath = launcher.LookPath
 
 // NewRodFetcher constructs without launching (launch is lazy), with the
 // same SSRF resolution as NewStaticFetcher.
@@ -98,6 +102,12 @@ func (r *RodFetcher) ensureBrowser() error {
 		return nil
 	}
 	l := launcher.New()
+	// QA §4: an installed Chrome/Edge first (Windows always has Edge) — rod's
+	// download is ~150 MB, unannounced, and fails offline. Snap Chromium can't
+	// read rod's /tmp profile dir under confinement, so it is skipped.
+	if p, ok := lookPath(); ok && !strings.HasPrefix(p, "/snap/") {
+		l = l.Bin(p)
+	}
 	// Explicit opt-in for environments without a SUID/userns sandbox (CI
 	// runners, some containers) — Chrome aborts at zygote init otherwise.
 	if os.Getenv("MAGPIE_CHROME_NO_SANDBOX") == "1" {

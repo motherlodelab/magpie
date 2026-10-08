@@ -18,6 +18,7 @@ func isolatedXDG(t *testing.T) string {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("XDG_CACHE_HOME", dir)
+	t.Setenv("XDG_DATA_HOME", dir)
 	t.Setenv("APPDATA", "")
 	return dir
 }
@@ -408,5 +409,55 @@ func TestLLMProvidersMatchExtract(t *testing.T) {
 	want := slices.Sorted(slices.Values(extract.ProviderNames()))
 	if !slices.Equal(got, want) {
 		t.Errorf("config.LLMProviders() = %v, extract.ProviderNames() = %v: keep them in step", got, want)
+	}
+}
+
+// dbPathEnv isolates every input DefaultDBPath reads: the XDG pair (Linux),
+// HOME (darwin's UserConfigDir) and LOCALAPPDATA (Windows).
+func dbPathEnv(t *testing.T) (root string) {
+	t.Helper()
+	root = t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(root, "cache"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(root, "data"))
+	t.Setenv("HOME", root)
+	t.Setenv("LOCALAPPDATA", filepath.Join(root, "local"))
+	return root
+}
+
+// QA §4: a new install keeps user data in the OS's data dir, never under a
+// cache dir that cleaners (BleachBit, `rm -rf ~/.cache`) treat as disposable.
+func TestDefaultDBPath_NewInstall(t *testing.T) {
+	root := dbPathEnv(t)
+	got := config.DefaultDBPath()
+	var want string
+	switch runtime.GOOS {
+	case "darwin":
+		want = filepath.Join(root, "Library", "Application Support", "magpie", "cache.db")
+	case "windows":
+		want = filepath.Join(root, "local", "magpie", "cache.db")
+	default:
+		want = filepath.Join(root, "data", "magpie", "cache.db")
+	}
+	if got != want {
+		t.Fatalf("DefaultDBPath() = %s, want %s", got, want)
+	}
+	if strings.HasPrefix(got, filepath.Join(root, "cache")) { // the legacy dir — what pre-S3 returned
+		t.Fatalf("new install under the cache dir: %s", got)
+	}
+}
+
+// An existing store is never moved: a move races the CLI and can lose the
+// WAL or records/ on a cross-volume rename. The legacy path wins.
+func TestDefaultDBPath_LegacyWins(t *testing.T) {
+	root := dbPathEnv(t)
+	legacy := filepath.Join(root, "cache", "magpie", "cache.db")
+	if err := os.MkdirAll(filepath.Dir(legacy), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacy, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := config.DefaultDBPath(); got != legacy {
+		t.Fatalf("DefaultDBPath() = %s, want the existing store %s", got, legacy)
 	}
 }
