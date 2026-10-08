@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/motherlodelab/magpie/clean"
 	"github.com/motherlodelab/magpie/crawl"
@@ -157,6 +158,82 @@ func TestRun_CostCeiling(t *testing.T) {
 	})
 	if !errors.Is(err, crawl.ErrCostCeiling) {
 		t.Errorf("err = %v, want ErrCostCeiling", err)
+	}
+}
+
+// TestRun_ExtractFailKeepsPage — QA S9: an extraction that fails after a
+// clean fetch returns the page (no Record) with its error, so a surface
+// can show what was already paid for in time.
+func TestRun_ExtractFailKeepsPage(t *testing.T) {
+	ok := &fakeExtractor{script: map[string]any{"title": "Widget"}}
+	noExtractor := func(db *store.DB) scrape.Deps {
+		d := fakeDeps(db, ok, "test-key")
+		d.ExtractorFor = func(_, _, _ string, _ *extract.Schema, _ string) (extract.Extractor, error) {
+			return nil, errors.New("extract: unknown provider")
+		}
+		return d
+	}
+	for _, c := range []struct {
+		name string
+		deps func(*store.DB) scrape.Deps
+		o    scrape.Options
+	}{
+		{"missing key", func(db *store.DB) scrape.Deps { return fakeDeps(db, ok, "") }, scrape.Options{Provider: "openai"}},
+		{"extractor", noExtractor, scrape.Options{Provider: "openai"}},
+		{"cost ceiling", func(db *store.DB) scrape.Deps { return fakeDeps(db, ok, "test-key") }, scrape.Options{Provider: "openai", MaxCost: 1e-9}},
+		{"401", func(db *store.DB) scrape.Deps {
+			return fakeDeps(db, &fakeExtractor{err: errors.New("provider: 401 unauthorized")}, "test-key")
+		}, scrape.Options{Provider: "openai"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			c.o.Schema, c.o.Render = testSchema(t), "static"
+			res, err := scrape.Run(context.Background(), c.deps(openScrapeDB(t)), scrapeOrigin(t, scrapeHTML), c.o)
+			if err == nil {
+				t.Fatal("err = nil, want the extraction failure")
+			}
+			if res.RunID == "" || res.Title != "Widget" || strings.TrimSpace(res.Markdown) == "" || res.Record != nil {
+				t.Errorf("res = run %q title %q md %d chars record %v; want the page kept, no record (err %v)",
+					res.RunID, res.Title, len(res.Markdown), res.Record, err)
+			}
+		})
+	}
+}
+
+// blockingPage answers nothing until its client gives up; hit closes once
+// the request arrived, so a test can cancel exactly mid-fetch.
+func blockingPage(t *testing.T) (srv *httptest.Server, hit <-chan struct{}) {
+	t.Helper()
+	h := make(chan struct{})
+	var once sync.Once
+	srv = httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		once.Do(func() { close(h) })
+		select {
+		case <-r.Context().Done():
+		case <-time.After(10 * time.Second): // ceiling: a cancel that never arrives fails the test, not the suite
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, h
+}
+
+// TestRun_CancelledIsInterrupted — QA S6: a scrape cancelled mid-fetch is
+// "interrupted" with no page error, crawl's rule — not a failure.
+func TestRun_CancelledIsInterrupted(t *testing.T) {
+	db := openScrapeDB(t)
+	srv, hit := blockingPage(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { <-hit; cancel() }()
+	res, err := scrape.Run(ctx, fakeDeps(db, &fakeExtractor{}, ""), srv.URL+"/", scrape.Options{Render: "static"})
+	if err == nil {
+		t.Fatal("err = nil, want the cancel")
+	}
+	row, gerr := db.GetRun(res.RunID)
+	if gerr != nil {
+		t.Fatalf("GetRun(%q): %v", res.RunID, gerr)
+	}
+	if row.Status != "interrupted" || row.PagesErr != 0 {
+		t.Errorf("row = %s ok %d err %d, want interrupted 0/0", row.Status, row.PagesOK, row.PagesErr)
 	}
 }
 
