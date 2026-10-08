@@ -236,6 +236,12 @@ func resolveCDP(o Options) string {
 
 // Run fetches, cleans, and optionally extracts one URL.
 func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) {
+	return runAs(ctx, d, rawURL, o, "scrape")
+}
+
+// runAs is Run under a run_history command: "scrape", or "watch" for
+// CheckForChange — a check is not a run (QA ST8).
+func runAs(ctx context.Context, d Deps, rawURL string, o Options, command string) (Result, error) {
 	if d.DB == nil {
 		return Result{}, fmt.Errorf("scrape: nil DB")
 	}
@@ -253,7 +259,7 @@ func Run(ctx context.Context, d Deps, rawURL string, o Options) (Result, error) 
 	runID, joined := o.RunID, o.RunID != ""
 	if !joined {
 		runID = store.NewRunID()
-		if err := d.DB.BeginRun(runID, "scrape"); err != nil {
+		if err := d.DB.BeginRun(runID, command); err != nil {
 			return Result{}, err
 		}
 	}

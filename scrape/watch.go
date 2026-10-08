@@ -50,7 +50,7 @@ func CheckForChange(ctx context.Context, d Deps, rawURL string, o Options) (Watc
 	// Zero-LLM is enforced, not hoped for: a caller-supplied schema must
 	// never turn a price watch into token spend.
 	o.Schema = nil
-	res, err := Run(ctx, d, rawURL, o)
+	res, err := runAs(ctx, d, rawURL, o, "watch")
 	if err != nil {
 		return WatchResult{}, err
 	}

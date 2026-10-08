@@ -592,6 +592,9 @@ Every fetch (static, robots, crawl) goes through one guarded transport:
 - **Run telemetry:** `run_history` rows accumulate `fetch_pages`,
   `fetch_bytes`, and `fetch_ms` next to LLM tokens/cost; databases created
   before Phase D gain the columns automatically on open.
+  A `watch` check records its row as `command='watch'`: a check is not a
+  run, so run listings and activity skip it (rows from before v0.1.29
+  stay `scrape`).
 - **Prompt-injection stripping (default-on):** hidden text — inline styles
   `display:none` / `visibility:hidden` / `font-size:0` / `opacity:0`, the
   `hidden` attribute, and HTML comments — is stripped from every cleaned

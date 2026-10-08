@@ -510,6 +510,38 @@ func TestListRuns(t *testing.T) {
 	}
 }
 
+// TestListRuns_SkipsWatchChecks — QA ST8/C13: a watch check is a
+// run_history row (fetch telemetry, GetRun) but not a run. Same-second
+// rows: before the fix the newest watch check took ListRuns(1)'s page.
+func TestListRuns_SkipsWatchChecks(t *testing.T) {
+	db := openTempDB(t)
+	const at = "2026-10-01T10:00:00Z"
+	seedRun(t, db, "w1", "watch", "error", 0, 1, at)
+	seedRun(t, db, "s1", "scrape", "finished", 1, 0, at)
+	seedRun(t, db, "w2", "watch", "finished", 1, 0, at)
+
+	for _, limit := range []int{1, 0} {
+		runs, err := db.ListRuns(limit)
+		if err != nil {
+			t.Fatalf("ListRuns(%d): %v", limit, err)
+		}
+		if len(runs) != 1 || runs[0].RunID != "s1" {
+			t.Errorf("ListRuns(%d) = %+v, want [s1]: a watch check took the page", limit, runs)
+		}
+	}
+	act, err := db.Activity(mustTime(t, "2026-10-01T00:00:00Z"), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(act) != 1 || act[0].Command != "scrape" {
+		t.Errorf("Activity = %+v, want only the scrape bucket", act)
+	}
+	// Vacuity: the checks are still recorded — unlisted, not deleted.
+	if r, err := db.GetRun("w1"); err != nil || r.Command != "watch" {
+		t.Errorf("GetRun(w1) = %+v, %v; want the watch row", r, err)
+	}
+}
+
 func TestSelectorDomains(t *testing.T) {
 	db := openTempDB(t)
 

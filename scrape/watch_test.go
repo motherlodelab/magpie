@@ -428,3 +428,29 @@ func TestCheckForChange_IgnoresReads(t *testing.T) {
 		t.Errorf("check after a read = changed %v, diff %q; want the 10 → 20 change", res.Changed, res.Diff)
 	}
 }
+
+// TestCheckForChange_RowIsWatch — QA ST8: a check records its run row as
+// command "watch" (fetch telemetry stays), so no run list counts it; a
+// scrape on the same deps is still a listed "scrape" run.
+func TestCheckForChange_RowIsWatch(t *testing.T) {
+	db := openScrapeDB(t)
+	deps := scrape.Deps{DB: db, Fetcher: &watchFetcher{body: pricePage("10")}}
+	url := "https://shop.example.com/p/kind"
+	if _, err := scrape.CheckForChange(context.Background(), deps, url, scrape.Options{Render: "static"}); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if _, err := scrape.Run(context.Background(), deps, url, scrape.Options{Render: "static"}); err != nil {
+		t.Fatalf("scrape: %v", err)
+	}
+	n, err := db.TableCount("run_history")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed, err := db.ListRuns(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 || len(listed) != 1 || listed[0].Command != "scrape" {
+		t.Errorf("rows = %d, listed = %+v; want 2 rows, only the scrape listed", n, listed)
+	}
+}
