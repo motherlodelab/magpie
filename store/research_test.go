@@ -617,9 +617,10 @@ func TestCrawlURLs(t *testing.T) {
 }
 
 // TestDeleteResearchRun_CoCite: the (b) purge (DR6.1) — a run's forget
-// deletes its facts, its exclusive snapshots, its spend and both rows; a
-// snapshot another run still cites survives until the last forgeter is
-// gone; watch-only snapshots are out of reach; unknown ids fail loudly.
+// deletes its facts, its exclusive snapshots, its read ledger (crawl_state
+// + dedup), its spend and both rows; a snapshot another run still cites
+// survives until the last forgeter is gone; watch-only snapshots are out
+// of reach; unknown ids fail loudly.
 func TestDeleteResearchRun_CoCite(t *testing.T) {
 	t.Parallel()
 	db := openTempDB(t)
@@ -638,6 +639,17 @@ func TestDeleteResearchRun_CoCite(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := db.LogLLMCall("a", store.LLMCall{Provider: "p", Model: "m", Purpose: "extract"}); err != nil {
+		t.Fatal(err)
+	}
+	// The read ledger: research Enqueues every URL it reads. Both runs read
+	// the shared page; a also read its exclusive one.
+	if _, err := db.Enqueue("a", []string{"https://x.test/shared", "https://x.test/a-only"}, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Enqueue("b", []string{"https://x.test/shared"}, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MarkDone("a", store.URLHash("https://x.test/shared")); err != nil {
 		t.Fatal(err)
 	}
 	watched, err := db.RecordSnapshot("https://x.test/watched", "the watched page text")
@@ -670,14 +682,20 @@ func TestDeleteResearchRun_CoCite(t *testing.T) {
 	if got := countRows(t, db, "llm_calls"); got != 0 {
 		t.Errorf("llm_calls rows = %d, want 0 (a's spend went with the run)", got)
 	}
+	if got := countRows(t, db, "crawl_state"); got != 1 {
+		t.Errorf("crawl_state rows = %d, want 1 (b's read of the shared page)", got)
+	}
+	if got := countRows(t, db, "dedup"); got != 1 {
+		t.Errorf("dedup rows = %d, want 1 (b's mark)", got)
+	}
 	if got := countRows(t, db, "run_history"); got != 1 {
 		t.Errorf("run_history rows = %d, want 1 (b only)", got)
 	}
 
-	if _, err := db.DeleteResearchRun("zz"); err == nil || !strings.Contains(err.Error(), `no research run "zz"`) {
-		t.Errorf("forget(unknown) = %v, want the no-research-run rejection", err)
+	if _, err := db.DeleteResearchRun("zz"); err == nil || !strings.Contains(err.Error(), `unknown research run "zz"`) {
+		t.Errorf("forget(unknown) = %v, want the store's unknown-run rejection", err)
 	}
-	if _, err := db.DeleteResearchRun("a"); err == nil || !strings.Contains(err.Error(), `no research run "a"`) {
+	if _, err := db.DeleteResearchRun("a"); err == nil || !strings.Contains(err.Error(), `unknown research run "a"`) {
 		t.Errorf("double forget = %v, want the same loud rejection", err)
 	}
 	if n, err := db.DeleteResearchRun("b"); err != nil || n != 2 {
@@ -688,5 +706,11 @@ func TestDeleteResearchRun_CoCite(t *testing.T) {
 	}
 	if _, ok, err := db.SnapshotAt("https://x.test/watched", watched); err != nil || !ok {
 		t.Errorf("watch-only snapshot after both forgets = %v, %v; want true", ok, err)
+	}
+	if got := countRows(t, db, "crawl_state"); got != 0 {
+		t.Errorf("crawl_state rows after both forgets = %d, want 0 (the read trail went with the runs)", got)
+	}
+	if got := countRows(t, db, "dedup"); got != 0 {
+		t.Errorf("dedup rows after both forgets = %d, want 0", got)
 	}
 }
