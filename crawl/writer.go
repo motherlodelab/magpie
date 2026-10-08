@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/motherlodelab/magpie/core"
@@ -59,6 +60,19 @@ func newWriter(outPath, format string, sch *extract.Schema, db *store.DB, runID 
 		return nil, fmt.Errorf("crawl: format %q must be jsonl|json|csv|sqlite", format)
 	}
 	return w, nil
+}
+
+// csvCell defuses spreadsheet formulas in scraped text (QA C7): a leading
+// = + - @ TAB CR gets a ' prefix, unless the cell is a plain number
+// ("-5.00" stays a number).
+func csvCell(s string) string {
+	if s == "" || !strings.ContainsRune("=+-@\t\r", rune(s[0])) {
+		return s
+	}
+	if _, err := strconv.ParseFloat(s, 64); err == nil {
+		return s
+	}
+	return "'" + s
 }
 
 // csvColumns = schema required[] then remaining sorted (deterministic).
@@ -129,7 +143,7 @@ func (w *writer) write(r core.PageResult) error {
 			}
 			switch t := v.(type) {
 			case string:
-				row[i] = t
+				row[i] = csvCell(t)
 			case float64, float32, int, int64, bool:
 				row[i] = fmt.Sprintf("%v", t)
 			default:

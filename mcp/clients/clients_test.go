@@ -3,6 +3,7 @@ package clients
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -134,6 +135,47 @@ func TestMerge_CreatedFilePerms(t *testing.T) {
 	}
 	if fi.Mode().Perm() != 0600 {
 		t.Errorf("perms = %v, want 0600 (sibling configs hold API keys)", fi.Mode().Perm())
+	}
+}
+
+// TestMerge_AtomicKeepsModeAndLink — QA ST4: another app's config is
+// replaced via temp + rename (a crash can't leave it half-written), keeps
+// its mode, and a symlinked config stays a symlink.
+func TestMerge_AtomicKeepsModeAndLink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix perms + symlinks")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "real.json")
+	link := filepath.Join(dir, "mcp.json")
+	if err := os.WriteFile(target, []byte(`{"theme":"dark"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := errors.Join(os.Chmod(target, 0o640), os.Symlink(target, link)); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Merge(link, "magpie", stanza{Command: "x", Args: []string{"serve"}}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(before, after) {
+		t.Error("config was rewritten in place, want temp + rename")
+	}
+	if after.Mode().Perm() != 0o640 {
+		t.Errorf("mode = %v, want the existing 0640 kept", after.Mode().Perm())
+	}
+	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the symlink was replaced by a regular file (%v)", err)
+	}
+	if b, err := os.ReadFile(target); err != nil || !bytes.Contains(b, []byte(`"magpie"`)) || !bytes.Contains(b, []byte(`"theme"`)) {
+		t.Errorf("target = %s, want the merged entry and the user's key", b)
 	}
 }
 

@@ -8,6 +8,7 @@ package clients
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -51,13 +52,10 @@ func ConfigPath(client string, d Dirs) (string, error) {
 // Merge sets mcpServers[name] = entry and nothing else. Read-side is
 // map[string]any — client configs carry arbitrary user keys a typed
 // struct would drop. mcpServers present but not an object is a hard
-// error, never an overwrite. os.WriteFile sets 0600 only on create;
-// an existing file keeps its mode. A missing parent folder is an error
-// too (os.WriteFile doesn't create it) — callers decide what that means.
-// ponytail: os.WriteFile truncates in place, so a kill mid-write can in
-// theory lose the config; temp+rename was rejected because preserving an
-// existing file's mode across rename needs a stat+chmod dance for a
-// ~200-byte file written by an interactive command.
+// error, never an overwrite. The write is atomic (QA ST4: these are
+// other apps' files, so a kill mid-write must not lose them): 0600 on
+// create, an existing file keeps its mode. A missing parent folder is an
+// error too (nothing creates it) — callers decide what that means.
 func Merge(path, name string, entry any) error {
 	var cfg map[string]any
 	if raw, err := os.ReadFile(path); err == nil {
@@ -91,8 +89,32 @@ func Merge(path, name string, entry any) error {
 		return fmt.Errorf("clients: encode %s: %w", path, err)
 	}
 	b = append(b, '\n')
-	if err := os.WriteFile(path, b, 0600); err != nil {
+	if err := writeFileAtomic(path, b); err != nil {
 		return fmt.Errorf("clients: write %s: %w", path, err)
 	}
 	return nil
+}
+
+// writeFileAtomic replaces path via a same-dir temp + rename, so a crash
+// leaves the old file or the new one, never half. An existing file keeps
+// its mode (new files get 0600), and a symlinked path (a dotfiles setup)
+// is written through, not replaced.
+func writeFileAtomic(path string, b []byte) error {
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		path = real
+	}
+	perm := os.FileMode(0o600)
+	if fi, err := os.Stat(path); err == nil {
+		perm = fi.Mode().Perm()
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(f.Name()) }() //nolint:errcheck // no-op after the rename
+	_, err = f.Write(b)
+	if err = errors.Join(err, f.Chmod(perm), f.Sync(), f.Close()); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
 }

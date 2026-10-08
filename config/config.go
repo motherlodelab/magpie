@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -160,12 +161,36 @@ func Save(path string, mutate func(*Config) error) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("config: mkdir %s: %w", filepath.Dir(path), err)
 	}
-	// 0600 only applies to fresh files (WriteFile keeps existing modes) —
-	// matches Load's group/world-readable warning threshold.
-	if err := os.WriteFile(path, out, 0o600); err != nil {
+	// QA ST4: atomic; 0600 only applies to fresh files (existing modes are
+	// kept) — matches Load's group/world-readable warning threshold.
+	if err := writeFileAtomic(path, out); err != nil {
 		return fmt.Errorf("config: write %s: %w", path, err)
 	}
 	return nil
+}
+
+// writeFileAtomic replaces path via a same-dir temp + rename, so a crash
+// leaves the old file or the new one, never half. An existing file keeps
+// its mode (new files get 0600), and a symlinked path (a dotfiles setup)
+// is written through, not replaced.
+func writeFileAtomic(path string, b []byte) error {
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		path = real
+	}
+	perm := os.FileMode(0o600)
+	if fi, err := os.Stat(path); err == nil {
+		perm = fi.Mode().Perm()
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(f.Name()) }() //nolint:errcheck // no-op after the rename
+	_, err = f.Write(b)
+	if err = errors.Join(err, f.Chmod(perm), f.Sync(), f.Close()); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
 }
 
 // setMappingKey sets key to the scalar string val in a mapping node,

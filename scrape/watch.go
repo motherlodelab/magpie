@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -64,8 +65,8 @@ func CheckForChange(ctx context.Context, d Deps, rawURL string, o Options) (Watc
 		if prev.ContentHash != newHash {
 			out.Changed = true
 			diff, derr := DiffWords(prev.Markdown, res.Markdown)
-			if derr != nil {
-				return WatchResult{}, derr
+			if derr != nil { // QA W1: past the diff window is still a change, and the snapshot below must become the baseline
+				diff = fmt.Sprintf("(changed — edit spans more than %d words, too large to diff)\n", maxDiffWindowWords)
 			}
 			out.Diff = diff
 			out.WordsDelta = len(strings.Fields(res.Markdown)) - len(strings.Fields(prev.Markdown))

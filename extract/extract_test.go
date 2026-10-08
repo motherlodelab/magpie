@@ -279,6 +279,54 @@ func TestCostTable(t *testing.T) {
 	}
 }
 
+// TestParseSchema_NoExternalRefs — D1: a schema is untrusted input (desktop
+// renderer, MCP inline schema), so compiling one never reads a local file or
+// fetches a URL. Internal refs still work, and the error spells out the fix.
+func TestParseSchema_NoExternalRefs(t *testing.T) {
+	for name, doc := range map[string]string{
+		"$defs":   `{"$defs":{"a":{"type":"string"}},"type":"object","properties":{"t":{"$ref":"#/$defs/a"}}}`,
+		"$schema": `{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object"}`,
+	} {
+		if _, err := extract.ParseSchema([]byte(doc)); err != nil {
+			t.Errorf("%s: %v, want it to compile", name, err)
+		}
+	}
+	local := filepath.Join(t.TempDir(), "money.json") // a VALID schema: the read itself is the hole
+	if err := os.WriteFile(local, []byte(`{"type":"string"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, ref := range []string{"file:///" + strings.TrimPrefix(filepath.ToSlash(local), "/"), "file:///etc/hostname", "other.json", "https://x.test/y.json"} {
+		_, err := extract.ParseSchema([]byte(`{"type":"object","properties":{"x":{"$ref":"` + ref + `"}}}`))
+		if err == nil {
+			t.Errorf("$ref %s compiled, want it refused", ref)
+			continue
+		}
+		for _, want := range []string{"points outside this schema", `"$defs"`, `"#/$defs/`} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("$ref %s: error lacks %q:\n%v", ref, want, err)
+			}
+		}
+	}
+}
+
+// TestCostFor_Unpriced — QA R1: a metered model missing from the price
+// table books a $2 in / $10 out per 1M fallback, so --max-cost, research
+// caps and the desktop budget still trip. Flat, local and :free stay 0.
+func TestCostFor_Unpriced(t *testing.T) {
+	u := extract.TokenUsage{PromptTokens: 1_000_000, CompletionTokens: 100_000}
+	if c := extract.CostFor("anthropic", "claude-sonnet-4-5", u); c != 3 {
+		t.Errorf("unpriced anthropic = %v, want the 3.00 fallback (2 in + 1 out)", c)
+	}
+	for _, pm := range [][2]string{{"ollama", "qwen3:8b"}, {"codex", "gpt-5-codex"}, {"openrouter", "x/y:free"}} {
+		if c := extract.CostFor(pm[0], pm[1], u); c != 0 {
+			t.Errorf("CostFor(%s, %s) = %v, want 0", pm[0], pm[1], c)
+		}
+	}
+	if c := extract.CostFor("openrouter", "x/y", extract.TokenUsage{PromptTokens: 10, USDEstimate: 0.42}); c != 0.42 {
+		t.Errorf("reported cost = %v, want 0.42 (provider-reported wins)", c)
+	}
+}
+
 func TestExtractPurposeDefault(t *testing.T) {
 	srv, _ := newFakeProvider(t, openAIEnvelope(`{"name":"Widget","price":12.99}`))
 	var purposes []string

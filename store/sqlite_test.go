@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"database/sql"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -44,6 +45,28 @@ func TestForeignKeysOn(t *testing.T) {
 	}
 	if v != 1 {
 		t.Errorf("PRAGMA foreign_keys = %d, want 1", v)
+	}
+}
+
+// TestOpen_EscapesDSN — QA C10: `% ? #` in a path are URI syntax to SQLite.
+// Unescaped, "crawl #2?x.sqlite" opens a file named "crawl " and the `?`
+// swallows every pragma.
+func TestOpen_EscapesDSN(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "crawl #2?x 100%.sqlite")
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close: %v", err)
+		}
+	}()
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("exact file missing: %v", err)
+	}
+	if v, err := db.Pragma("foreign_keys"); err != nil || v != 1 { // the DSN's pragmas were parsed
+		t.Errorf("PRAGMA foreign_keys = %d (%v), want 1", v, err)
 	}
 }
 
