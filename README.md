@@ -2,7 +2,7 @@
 
 [![Go 1.26+](https://img.shields.io/badge/go-1.26+-blue.svg)](go.mod)
 [![CGO-free](https://img.shields.io/badge/CGO-free-green.svg)](spec.md)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
+[![License: AGPL v3 or commercial](https://img.shields.io/badge/license-AGPL--v3%20OR%20commercial-blue.svg)](#license)
 
 A fast, single-binary web scraper for humans and agents: fetch a page,
 strip the boilerplate, and get clean Markdown — plus optional structured
@@ -793,9 +793,12 @@ See `go.mod` / `go.sum` for the full dependency list and their licenses.
 
 ## License
 
-[MIT](LICENSE) — © 2026 Dominique Degottex. Contributions are welcome
-under the terms in [CONTRIBUTING.md](CONTRIBUTING.md) (MIT + a relicensing
-grant so the project can evolve its license as it grows).
+Dual-licensed — [AGPL-3.0-or-later, or a commercial license](LICENSE) —
+© 2026 Dominique Degottex. The AGPL is the default; the commercial side
+covers closed-source or embedded use the copyleft would otherwise require
+to be opened (it is what lets the Magpie desktop app stay closed).
+Contributions are welcome under the same terms — see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Last Updated
 

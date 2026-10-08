@@ -6,14 +6,15 @@ Thanks for considering a contribution to magpie.
 
 By submitting a pull request or patch to this repository you agree that:
 
-1. Your contribution is licensed under the project's [MIT License](LICENSE).
+1. Your contribution is licensed under the project's license —
+   [AGPL-3.0-or-later, or the project's commercial license](LICENSE) — at
+   the maintainer's choice.
 2. You grant the project maintainer a perpetual, worldwide, royalty-free
    right to include, modify, and relicense your contribution as part of
    future project releases — including under different or additional
-   licenses (e.g. dual-licensing the project under AGPL-3.0 or commercial
-   terms). This keeps the project free to change its license as it evolves;
-   contributions already distributed under MIT remain MIT for their
-   recipients.
+   licenses. This keeps the project free to change its license as it
+   evolves; code already distributed stays available to its recipients
+   under the terms in effect when it was distributed.
 
 ## Ground rules
 
