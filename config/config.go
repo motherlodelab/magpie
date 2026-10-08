@@ -408,7 +408,7 @@ func keyEnvName(provider string) string {
 
 // llmProviders are the names the generic key tiers (--api-key,
 // MAGPIE_API_KEY) may reach — an allowlist, so a new non-LLM slot fails
-// closed. config is a leaf and can't import extract: cli's
+// closed. config is a leaf and can't import extract: config_test's
 // TestLLMProvidersMatchExtract keeps this in step with extract.ProviderNames().
 var llmProviders = []string{"anthropic", "openai", "ollama", "openrouter", "codex", "opencode-go", "opencode-zen"}
 

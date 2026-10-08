@@ -11,12 +11,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/motherlodelab/magpie/config"
-	"github.com/motherlodelab/magpie/extract"
 
 	"github.com/spf13/cobra"
 )
@@ -1045,16 +1043,5 @@ func TestCrawl_CorpusCLIViolations(t *testing.T) {
 		if !strings.Contains(err.Error(), "corpus") {
 			t.Errorf("row %d error %v does not name corpus", i, err)
 		}
-	}
-}
-
-// TestLLMProvidersMatchExtract (QA ST9): config is a leaf and keeps its own
-// copy of the LLM provider names (the generic key's allowlist); this drift
-// test fails the day extract gains a provider config doesn't know.
-func TestLLMProvidersMatchExtract(t *testing.T) {
-	got := slices.Sorted(slices.Values(config.LLMProviders()))
-	want := slices.Sorted(slices.Values(extract.ProviderNames()))
-	if !slices.Equal(got, want) {
-		t.Errorf("config.LLMProviders() = %v, extract.ProviderNames() = %v: keep them in step", got, want)
 	}
 }
