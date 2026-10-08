@@ -615,3 +615,78 @@ func TestCrawlURLs(t *testing.T) {
 		t.Errorf("CrawlURLs(unknown) = %#v (%v), want an empty slice", got, err)
 	}
 }
+
+// TestDeleteResearchRun_CoCite: the (b) purge (DR6.1) — a run's forget
+// deletes its facts, its exclusive snapshots, its spend and both rows; a
+// snapshot another run still cites survives until the last forgeter is
+// gone; watch-only snapshots are out of reach; unknown ids fail loudly.
+func TestDeleteResearchRun_CoCite(t *testing.T) {
+	t.Parallel()
+	db := openTempDB(t)
+	beginResearch(t, db, "a")
+	beginResearch(t, db, "b")
+	shared := pinSnap(t, db, "https://x.test/shared", "h1", "the shared page text")
+	aOnly := pinSnap(t, db, "https://x.test/a-only", "h2", "the a-only page text")
+	bOnly := pinSnap(t, db, "https://x.test/b-only", "h3", "the b-only page text")
+	mk := func(claim, url string, at time.Time) store.Fact {
+		return store.Fact{Claim: claim, Quote: "page text", URL: url, CheckedAt: at}
+	}
+	if _, err := db.PutFacts("a", []store.Fact{mk("s", "https://x.test/shared", shared), mk("ao", "https://x.test/a-only", aOnly)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.PutFacts("b", []store.Fact{mk("s", "https://x.test/shared", shared), mk("bo", "https://x.test/b-only", bOnly)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.LogLLMCall("a", store.LLMCall{Provider: "p", Model: "m", Purpose: "extract"}); err != nil {
+		t.Fatal(err)
+	}
+	watched, err := db.RecordSnapshot("https://x.test/watched", "the watched page text")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := db.DeleteResearchRun("a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("receipt = %d, want 1 (a-only gone, shared survives)", n)
+	}
+	if got, err := db.Facts("a"); err != nil || len(got) != 0 {
+		t.Errorf("facts(a) = %d, %v; want 0", len(got), err)
+	}
+	if got, err := db.Facts("b"); err != nil || len(got) != 2 {
+		t.Errorf("facts(b) = %d, %v; want 2 (untouched)", len(got), err)
+	}
+	if _, ok, err := db.SnapshotAt("https://x.test/shared", shared); err != nil || !ok {
+		t.Errorf("shared snapshot survived = %v, %v; want true (b still cites it)", ok, err)
+	}
+	if _, ok, err := db.SnapshotAt("https://x.test/a-only", aOnly); err != nil || ok {
+		t.Errorf("a-only snapshot survived = %v, %v; want false", ok, err)
+	}
+	if _, ok, err := db.SnapshotAt("https://x.test/watched", watched); err != nil || !ok {
+		t.Errorf("watch-only snapshot survived = %v, %v; want true (never fact-cited)", ok, err)
+	}
+	if got := countRows(t, db, "llm_calls"); got != 0 {
+		t.Errorf("llm_calls rows = %d, want 0 (a's spend went with the run)", got)
+	}
+	if got := countRows(t, db, "run_history"); got != 1 {
+		t.Errorf("run_history rows = %d, want 1 (b only)", got)
+	}
+
+	if _, err := db.DeleteResearchRun("zz"); err == nil || !strings.Contains(err.Error(), `no research run "zz"`) {
+		t.Errorf("forget(unknown) = %v, want the no-research-run rejection", err)
+	}
+	if _, err := db.DeleteResearchRun("a"); err == nil || !strings.Contains(err.Error(), `no research run "a"`) {
+		t.Errorf("double forget = %v, want the same loud rejection", err)
+	}
+	if n, err := db.DeleteResearchRun("b"); err != nil || n != 2 {
+		t.Errorf("forget(b) = %d, %v; want 2 (shared + b-only)", n, err)
+	}
+	if _, ok, err := db.SnapshotAt("https://x.test/shared", shared); err != nil || ok {
+		t.Errorf("shared snapshot after the last forgeter = %v, %v; want false", ok, err)
+	}
+	if _, ok, err := db.SnapshotAt("https://x.test/watched", watched); err != nil || !ok {
+		t.Errorf("watch-only snapshot after both forgets = %v, %v; want true", ok, err)
+	}
+}

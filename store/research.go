@@ -271,3 +271,76 @@ func (d *DB) CrawlURLs(runID string) ([]CrawlURL, error) {
 	}
 	return out, nil
 }
+
+// DeleteResearchRun forgets a research run and the stored page text it is
+// responsible for (DR6.1, the legal (b) condition): its facts, the
+// snapshots only its facts cited, its spend rows, its research_runs row and
+// its run_history entry. A snapshot another run's fact still cites survives
+// (the cite-join); watch/scrape snapshots are never fact-cited, so they are
+// structurally out of reach. Returns the number of snapshots deleted — the
+// receipt the UI shows.
+//
+// ponytail: ordered Execs on the single-writer handle, no transaction — a
+// crash mid-way leaves at most uncited orphan snapshots (extra retention,
+// never corruption; FKs cannot dangle in this order). Wrap in a tx when a
+// second caller needs atomicity.
+func (d *DB) DeleteResearchRun(runID string) (int64, error) {
+	// Existence guard first: everything below would otherwise half-apply to
+	// a non-research run id (llm_calls FKs run_history, not research_runs).
+	var one string
+	err := d.db.QueryRow(`SELECT 'x' FROM research_runs WHERE run_id=?`, runID).Scan(&one)
+	if err == sql.ErrNoRows {
+		return 0, fmt.Errorf("store: forget run: no research run %q", runID)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("store: forget run: %w", err)
+	}
+	// The pins must be captured before the facts go — they are the cite-join's input.
+	type pin struct{ hash, at string }
+	rows, err := d.db.Query(`SELECT url_hash, checked_at FROM facts WHERE run_id=?`, runID)
+	if err != nil {
+		return 0, fmt.Errorf("store: forget run: %w", err)
+	}
+	var pins []pin
+	for rows.Next() {
+		var p pin
+		if err := rows.Scan(&p.hash, &p.at); err != nil {
+			_ = rows.Close() //nolint:errcheck // read-only; close error unactionable
+			return 0, fmt.Errorf("store: forget run: %w", err)
+		}
+		pins = append(pins, p)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close() //nolint:errcheck // read-only; close error unactionable
+		return 0, fmt.Errorf("store: forget run: %w", err)
+	}
+	_ = rows.Close() //nolint:errcheck // read-only; close error unactionable
+
+	if _, err := d.db.Exec(`DELETE FROM facts WHERE run_id=?`, runID); err != nil {
+		return 0, fmt.Errorf("store: forget run: %w", err)
+	}
+	var deleted int64
+	for _, p := range pins {
+		res, err := d.db.Exec(`DELETE FROM snapshots WHERE url_hash=? AND checked_at=?
+			AND NOT EXISTS (SELECT 1 FROM facts WHERE url_hash=? AND checked_at=?)`,
+			p.hash, p.at, p.hash, p.at)
+		if err != nil {
+			return deleted, fmt.Errorf("store: forget run: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return deleted, fmt.Errorf("store: forget run: %w", err)
+		}
+		deleted += n
+	}
+	if _, err := d.db.Exec(`DELETE FROM llm_calls WHERE run_id=?`, runID); err != nil {
+		return deleted, fmt.Errorf("store: forget run: %w", err)
+	}
+	if _, err := d.db.Exec(`DELETE FROM research_runs WHERE run_id=?`, runID); err != nil {
+		return deleted, fmt.Errorf("store: forget run: %w", err)
+	}
+	if _, err := d.db.Exec(`DELETE FROM run_history WHERE run_id=?`, runID); err != nil {
+		return deleted, fmt.Errorf("store: forget run: %w", err)
+	}
+	return deleted, nil
+}
