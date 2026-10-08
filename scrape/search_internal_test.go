@@ -287,6 +287,11 @@ func TestSearchDuckDuckGo(t *testing.T) {
 	if records[1].URL != "https://direct.example.org/page" {
 		t.Errorf("hit1 URL = %s, want direct link passthrough", records[1].URL)
 	}
+	for _, r := range records { // QA W7: the fixture's first result is a y.js ad
+		if strings.Contains(r.URL, "/y.js") {
+			t.Errorf("ad listed as a hit: %+v", r)
+		}
+	}
 
 	// Zero-result variant.
 	empty := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

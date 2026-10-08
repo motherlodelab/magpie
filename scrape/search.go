@@ -405,7 +405,8 @@ func searchDuckDuckGo(ctx context.Context, c *http.Client, query string, limit i
 	return hits, nil
 }
 
-// ddgDecodeHref unwraps //duckduckgo.com/l/?uddg=<encoded> redirects.
+// ddgDecodeHref unwraps //duckduckgo.com/l/?uddg=<encoded> redirects and
+// drops ads ("" = skip the hit).
 func ddgDecodeHref(href string) string {
 	if strings.HasPrefix(href, "//") {
 		href = "https:" + href
@@ -416,6 +417,9 @@ func ddgDecodeHref(href string) string {
 	}
 	if u.Host != "" && u.Host != "duckduckgo.com" {
 		return href
+	}
+	if u.Path == "/y.js" { // ponytail: DDG's ad click-redirect as served 2026-10 (QA W7); a renamed ad path lets ads back in — re-record the fixture
+		return ""
 	}
 	if got := u.Query().Get("uddg"); got != "" {
 		return got
