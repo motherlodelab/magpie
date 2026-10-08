@@ -2,6 +2,7 @@ package research_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -148,6 +149,40 @@ func TestRun_Resume(t *testing.T) {
 		if c.Provider != "openai" {
 			t.Errorf("a %s call ran on %s/%s, want the stored openai pair", c.Task, c.Provider, c.Model)
 		}
+	}
+	e.settle(t)
+}
+
+// TestRun_ResumeKeepsRaisedCap — QA R9: a resume's raised cap is stored,
+// so the report (and any later resume) reads the cap the run now has.
+func TestRun_ResumeKeepsRaisedCap(t *testing.T) {
+	e := newEnv(t, e2ePages(t), e2eSerp, defaultScript)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	first, err := research.Run(ctx, e.deps, e2eJob(e, func(j *research.Job) {
+		j.OnEvent = func(ev research.Event) {
+			if ev.Stage == "facts" && ev.URL == uAlpha {
+				cancel()
+			}
+		}
+	}))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("first run: %v, want canceled", err)
+	}
+	if _, err := research.Run(context.Background(), e.deps, e2eJob(e, func(j *research.Job) {
+		j.RunID = first.RunID
+		j.Options.MaxCostUSD = 5 // e2eJob's default is 1
+	})); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	rr, err := e.db.GetResearchRun(first.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var o research.Options
+	uerr := json.Unmarshal([]byte(rr.Options), &o)
+	if o.MaxCostUSD != 5 {
+		t.Errorf("stored cap = %v (%v), want the raised 5", o.MaxCostUSD, uerr)
 	}
 	e.settle(t)
 }

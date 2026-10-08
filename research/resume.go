@@ -9,7 +9,7 @@ import (
 )
 
 // resumeJob replaces the caller's question and options with the stored
-// ones; only a higher cap is taken from the caller.
+// ones; only a higher cap is taken from the caller (Run stores it).
 func resumeJob(j Job, rr store.ResearchRun) (Job, error) {
 	var o Options
 	if err := json.Unmarshal([]byte(rr.Options), &o); err != nil {

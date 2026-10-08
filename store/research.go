@@ -85,6 +85,17 @@ func (d *DB) SetResearchState(runID, status, steer string) error {
 		status, steer, runID)
 }
 
+// SetResearchOptions rewrites an unfinished run's options JSON — a resume's
+// raised cap is the run's cap from then on (QA R9). A done run is terminal.
+func (d *DB) SetResearchOptions(runID, options string) error {
+	if !json.Valid([]byte(options)) {
+		return fmt.Errorf("store: set research options: run %q: options are not JSON", runID)
+	}
+	return d.execOne("set research options", fmt.Sprintf("run %q unknown or done", runID),
+		`UPDATE research_runs SET options=? WHERE run_id=? AND status!='done'`,
+		options, runID)
+}
+
 // FinishResearchRun ends an in-flight run as done, failed or stopped. A
 // report is stored iff the status is done.
 func (d *DB) FinishResearchRun(runID, status, report string) error {

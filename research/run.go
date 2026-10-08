@@ -188,8 +188,9 @@ type run struct {
 // crawl.ErrCostCeiling; facts are kept, so a resume can write later). A
 // Job.RunID naming an unfinished research run resumes it: the stored
 // question, plan (no scope call) and options — only a higher MaxCostUSD
-// from the caller wins, so a run its cap stopped can be resumed to write —
-// the ledger so far, no page re-read, spend and reads cumulative.
+// from the caller wins and is stored, so a run its cap stopped can be
+// resumed to write — the ledger so far, no page re-read, spend and reads
+// cumulative.
 // ponytail: issued queries, searches, replanned angles and pivot
 // bookkeeping aren't persisted — a resume may re-issue a query (and its
 // searches aren't counted against MaxToolCalls), and a pivotal fact keeps
@@ -237,6 +238,13 @@ func Run(ctx context.Context, d scrape.Deps, j Job) (rep Report, err error) {
 			return rep, err
 		}
 		if err = d.DB.SetResearchState(r.id, "running", rr.Steer); err != nil {
+			return rep, err
+		}
+		optsJSON, oerr := json.Marshal(r.o)
+		if oerr != nil {
+			return rep, oerr
+		}
+		if err = d.DB.SetResearchOptions(r.id, string(optsJSON)); err != nil { // QA R9: the raised cap is the run's cap from here on
 			return rep, err
 		}
 	} else {
