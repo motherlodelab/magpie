@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1860,5 +1861,54 @@ func TestCrawlSource_UnderHygieneBar(t *testing.T) {
 		if n := strings.Count(string(data), "\n"); n > 500 {
 			t.Errorf("%s = %d lines, want ≤ 500 (split it at its topic seam)", name, n)
 		}
+	}
+}
+
+// ceilingAfter passes n extractions to the embedded extractor, then refuses
+// with ErrCostCeiling — but only once n records were written (seen), so the
+// extract stage's send can't race the cancel and drop the n-th page.
+type ceilingAfter struct {
+	extract.Extractor // Name() and the first n Extract calls
+	n                 int32
+	calls             atomic.Int32
+	seen              atomic.Int32 // bumped by Options.OnRecord
+}
+
+func (c *ceilingAfter) Extract(ctx context.Context, in extract.ExtractInput) (extract.ExtractResult, error) {
+	if c.calls.Add(1) <= c.n {
+		return c.Extractor.Extract(ctx, in)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for c.seen.Load() < c.n && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond) // a bounded settle on an observable count, not a timing guess
+	}
+	return extract.ExtractResult{}, fmt.Errorf("budget reached: %w", ErrCostCeiling)
+}
+
+// TestCrawl_CostCeilingKeepsCounts — QA C6: a run aborted by the cost
+// ceiling still reports (Result) and records (the run row) the pages it
+// finished; it used to return and write zero counts.
+func TestCrawl_CostCeilingKeepsCounts(t *testing.T) {
+	o := newSiteOrigin(t, sevenPages(), "")
+	db := openCrawlDB(t)
+	ce := &ceilingAfter{Extractor: &fakeExtractor{script: map[string]map[string]any{"default": crawlTruth}}, n: 2}
+	res, err := Run(context.Background(), Options{
+		SeedURL: o.srv.URL + "/0", Schema: mustTestSchema(t),
+		MaxPages: 7, MaxDepth: 10, SameHost: true, RunID: "c6",
+		Rate: 1000, Format: "jsonl", Out: filepath.Join(t.TempDir(), "r.jsonl"),
+		DB: db, Extractor: ce, OnRecord: func(map[string]any) { ce.seen.Add(1) },
+	})
+	if !errors.Is(err, ErrCostCeiling) {
+		t.Fatalf("Run err = %v, want ErrCostCeiling", err)
+	}
+	if res.PagesOK != 2 || res.Records != 2 {
+		t.Errorf("Result = %+v, want PagesOK 2, Records 2", res)
+	}
+	row, gerr := db.GetRun("c6")
+	if gerr != nil {
+		t.Fatal(gerr)
+	}
+	if row.PagesOK != 2 || row.Status != "error" {
+		t.Errorf("run row = ok %d status %s, want ok 2 status error", row.PagesOK, row.Status)
 	}
 }
