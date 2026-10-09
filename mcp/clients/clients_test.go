@@ -334,3 +334,53 @@ func TestMerge_ExistingFilePermsPreserved(t *testing.T) {
 		t.Errorf("perms = %v, want preserved 0644", fi.Mode().Perm())
 	}
 }
+
+// ---- Merge: the user's own file is kept once (QA §3, K5) ----
+
+// The first merge into an existing config keeps the user's bytes as
+// <path>.magpie.bak (same mode); later merges never overwrite it, so the
+// backup is always the user's file, not a magpie write.
+func TestMerge_BackupOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "claude_desktop_config.json")
+	writeConfig(t, path, siblingConfigJSON)
+	if err := os.Chmod(path, 0o644); err != nil { // umask-proof
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bak := path + ".magpie.bak"
+	for i := range 2 {
+		if err := Merge(path, "magpie", map[string]string{"url": "u" + strings.Repeat("x", i)}); err != nil {
+			t.Fatalf("merge %d: %v", i+1, err)
+		}
+		got, err := os.ReadFile(bak)
+		if err != nil {
+			t.Fatalf("merge %d: no backup: %v", i+1, err)
+		}
+		if !bytes.Equal(got, original) {
+			t.Fatalf("merge %d: backup = %q, want the original %q", i+1, got, original)
+		}
+	}
+	if runtime.GOOS != "windows" {
+		if fi, err := os.Stat(bak); err != nil || fi.Mode().Perm() != 0o644 {
+			t.Errorf("backup mode = %v (%v), want the original's 0644", fi.Mode().Perm(), err)
+		}
+	}
+	// Vacuity: the config itself did change.
+	if cur, err := os.ReadFile(path); err != nil || bytes.Equal(cur, original) {
+		t.Fatalf("config unchanged after merge (%v)", err)
+	}
+}
+
+// Nothing of the user's existed, so there is nothing to back up.
+func TestMerge_FreshFileNoBackup(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".mcp.json")
+	if err := Merge(path, "magpie", stanza{Command: "x", Args: []string{"serve"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path + ".magpie.bak"); !os.IsNotExist(err) {
+		t.Errorf("fresh file got a backup (stat err %v)", err)
+	}
+}
