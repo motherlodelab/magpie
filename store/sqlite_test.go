@@ -1,9 +1,12 @@
 package store_test
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -702,5 +705,137 @@ func TestRunColsScan_ErrorFields(t *testing.T) {
 	}
 	if r := got["pre-d-run"]; r.ErrorKind != "" || r.ErrorMsg != "" {
 		t.Errorf("migrated pre-D row = kind %q msg %q, want ''", r.ErrorKind, r.ErrorMsg)
+	}
+}
+
+// rawUserVersion reads or (with set >= 0) writes PRAGMA user_version
+// through a plain connection, outside store.Open.
+func rawUserVersion(t *testing.T, path string, set int) int {
+	t.Helper()
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := raw.Close(); err != nil {
+			t.Errorf("close raw: %v", err)
+		}
+	}()
+	if set >= 0 {
+		if _, err := raw.Exec(fmt.Sprintf("PRAGMA user_version = %d", set)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var v int
+	if err := raw.QueryRow("PRAGMA user_version").Scan(&v); err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+func fileSHA(t *testing.T, path string) [32]byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sha256.Sum256(b)
+}
+
+func mustOpenClose(t *testing.T, path string) {
+	t.Helper()
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+}
+
+// QA §3 (K1): a store written by a newer magpie is refused before any DDL
+// or migration runs against it, and its bytes stay exactly as they were.
+func TestOpen_NewerSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.db")
+	mustOpenClose(t, path)
+	rawUserVersion(t, path, 99)
+	before := fileSHA(t, path)
+
+	db, err := store.Open(path)
+	if err == nil {
+		_ = db.Close() //nolint:errcheck // already failing
+		t.Fatal("Open accepted a store with user_version 99")
+	}
+	if !strings.Contains(err.Error(), "newer magpie") {
+		t.Errorf("err = %v, want the 'newer magpie' refusal", err)
+	}
+	if fileSHA(t, path) != before {
+		t.Error("the refused store's bytes changed")
+	}
+}
+
+// Vacuity for the refusal: a fresh store is stamped with the current
+// schema, reopening is idempotent, and a pre-guard (v0) store opens and
+// gets stamped — only NEWER stores are refused.
+func TestOpen_StampsVersion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.db")
+	mustOpenClose(t, path)
+	if v := rawUserVersion(t, path, -1); v != 1 {
+		t.Fatalf("fresh store user_version = %d, want 1", v)
+	}
+	mustOpenClose(t, path)
+	if v := rawUserVersion(t, path, -1); v != 1 {
+		t.Fatalf("reopened store user_version = %d, want 1", v)
+	}
+	rawUserVersion(t, path, 0) // a store from before the guard existed
+	mustOpenClose(t, path)
+	if v := rawUserVersion(t, path, -1); v != 1 {
+		t.Fatalf("v0 store user_version after Open = %d, want 1", v)
+	}
+}
+
+// QA §3 (K2): the store is private — a dir Open creates is 0700 and the db
+// file (and the WAL/SHM SQLite derives from its mode) 0600. A dir that
+// already exists keeps its mode: the path is user-configurable, so a
+// chmod could lock down ~/projects.
+func TestOpen_Modes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix modes")
+	}
+	root := t.TempDir()
+	path := filepath.Join(root, "new", "t.db")
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	for _, p := range []string{path, path + "-wal", path + "-shm"} {
+		fi, err := os.Stat(p)
+		if err != nil {
+			if p == path {
+				t.Fatal(err)
+			}
+			continue // WAL/SHM exist only while there is something to log
+		}
+		if m := fi.Mode().Perm(); m != 0o600 {
+			t.Errorf("%s mode = %v, want 0600", filepath.Base(p), m)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(filepath.Dir(path)); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Errorf("created dir mode = %v (%v), want 0700", fi.Mode().Perm(), err)
+	}
+
+	existing := filepath.Join(root, "projects")
+	if err := os.Mkdir(existing, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(existing, 0o755); err != nil { // umask-proof
+		t.Fatal(err)
+	}
+	mustOpenClose(t, filepath.Join(existing, "x.db"))
+	if fi, err := os.Stat(existing); err != nil || fi.Mode().Perm() != 0o755 {
+		t.Errorf("existing dir mode = %v (%v), want 0755 untouched", fi.Mode().Perm(), err)
 	}
 }
