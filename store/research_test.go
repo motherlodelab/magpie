@@ -1,11 +1,13 @@
 package store_test
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"math"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -618,9 +620,10 @@ func TestCrawlURLs(t *testing.T) {
 
 // TestDeleteResearchRun_CoCite: the (b) purge (DR6.1) — a run's forget
 // deletes its facts, its exclusive snapshots, its read ledger (crawl_state
-// + dedup), its spend and both rows; a snapshot another run still cites
+// + dedup) and its research row; a snapshot another run still cites
 // survives until the last forgeter is gone; watch-only snapshots are out
-// of reach; unknown ids fail loudly.
+// of reach; the spend stays (v0.1.31: a tombstone ListRuns hides); unknown
+// ids fail loudly.
 func TestDeleteResearchRun_CoCite(t *testing.T) {
 	t.Parallel()
 	db := openTempDB(t)
@@ -679,8 +682,8 @@ func TestDeleteResearchRun_CoCite(t *testing.T) {
 	if _, ok, err := db.SnapshotAt("https://x.test/watched", watched); err != nil || !ok {
 		t.Errorf("watch-only snapshot survived = %v, %v; want true (never fact-cited)", ok, err)
 	}
-	if got := countRows(t, db, "llm_calls"); got != 0 {
-		t.Errorf("llm_calls rows = %d, want 0 (a's spend went with the run)", got)
+	if got := countRows(t, db, "llm_calls"); got != 1 {
+		t.Errorf("llm_calls rows = %d, want 1 (a's spend is the budget's ledger — it stays)", got)
 	}
 	if got := countRows(t, db, "crawl_state"); got != 1 {
 		t.Errorf("crawl_state rows = %d, want 1 (b's read of the shared page)", got)
@@ -688,8 +691,11 @@ func TestDeleteResearchRun_CoCite(t *testing.T) {
 	if got := countRows(t, db, "dedup"); got != 1 {
 		t.Errorf("dedup rows = %d, want 1 (b's mark)", got)
 	}
-	if got := countRows(t, db, "run_history"); got != 1 {
-		t.Errorf("run_history rows = %d, want 1 (b only)", got)
+	if got, err := db.GetRun("a"); err != nil || got.Status != "forgotten" {
+		t.Errorf("run_history a = %+v, %v; want the spend-only 'forgotten' tombstone", got, err)
+	}
+	if runs, err := db.ListRuns(0); err != nil || len(runs) != 1 || runs[0].RunID != "b" {
+		t.Errorf("ListRuns = %+v, %v; want b only (the tombstone is hidden)", runs, err)
 	}
 
 	if _, err := db.DeleteResearchRun("zz"); err == nil || !strings.Contains(err.Error(), `unknown research run "zz"`) {
@@ -712,5 +718,120 @@ func TestDeleteResearchRun_CoCite(t *testing.T) {
 	}
 	if got := countRows(t, db, "dedup"); got != 0 {
 		t.Errorf("dedup rows after both forgets = %d, want 0", got)
+	}
+}
+
+// TestDeleteResearchRun_PurgesEveryRead (v0.1.31, review of #53): research
+// stores a copy of EVERY page it reads, before extraction — not only the
+// ones its facts cite. Forget must purge them all (a gated page that
+// yielded no fact, a resume's re-read), keep the user's own scrape and
+// watch copies of the same URLs, keep the spend (the budget's ledger), and
+// leave no page text in the database file (secure_delete).
+func TestDeleteResearchRun_PurgesEveryRead(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "t.db")
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beginResearch(t, db, "r")
+	const canary = "GATED-CANARY-7f3a9 subscriber-only page text"
+	read := func(url, md string) time.Time {
+		t.Helper()
+		at, err := db.RecordRunSnapshot("r", url, md)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return at
+	}
+	cited := read("https://gated.test/a", canary+" a")
+	uncited := read("https://gated.test/b", canary+" b")  // read, yielded no fact
+	reread1 := read("https://gated.test/c", canary+" c1") // a resume re-reads a page:
+	reread2 := read("https://gated.test/c", canary+" c2") // two copies, both the run's
+	if _, err := db.PutFacts("r", []store.Fact{{Claim: "c", Quote: canary, URL: "https://gated.test/a", CheckedAt: cited}}); err != nil {
+		t.Fatal(err)
+	}
+	scraped, err := db.RecordSnapshot("https://gated.test/b", "the user's own scrape of b") // not the run's
+	if err != nil {
+		t.Fatal(err)
+	}
+	watched, err := db.PutSnapshot("https://gated.test/a", "h", "a watch check of a", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.LogLLMCall("r", store.LLMCall{Provider: "p", Model: "m", USDEstimate: 0.25, Purpose: "extract"}); err != nil {
+		t.Fatal(err)
+	}
+	spend := func() float64 {
+		t.Helper()
+		ps, err := db.SpendByProvider(time.Time{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var sum float64
+		for _, p := range ps {
+			sum += p.USDEstimate
+		}
+		return sum
+	}
+	before := spend()
+	fileHasCanary := func() bool {
+		t.Helper()
+		var all []byte
+		for _, p := range []string{path, path + "-wal"} {
+			b, err := os.ReadFile(p)
+			if err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			all = append(all, b...)
+		}
+		return bytes.Contains(all, []byte("GATED-CANARY-7f3a9"))
+	}
+	// Vacuity: the text really is in the file before the forget.
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !fileHasCanary() {
+		t.Fatal("the canary isn't in the database file before the forget — the byte scan proves nothing")
+	}
+	if db, err = store.Open(path); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := db.DeleteResearchRun("r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 4 {
+		// RED on v0.1.30: 1 (only the cited copy)
+		t.Errorf("receipt = %d, want 4 (cited, uncited and both re-reads)", n)
+	}
+	for name, c := range map[string]struct {
+		url string
+		at  time.Time
+	}{"cited": {"https://gated.test/a", cited}, "uncited": {"https://gated.test/b", uncited},
+		"re-read 1": {"https://gated.test/c", reread1}, "re-read 2": {"https://gated.test/c", reread2}} {
+		if _, ok, err := db.SnapshotAt(c.url, c.at); err != nil || ok {
+			t.Errorf("%s copy survived = %v, %v; want gone", name, ok, err)
+		}
+	}
+	if _, ok, err := db.SnapshotAt("https://gated.test/b", scraped); err != nil || !ok {
+		t.Errorf("the user's scrape copy survived = %v, %v; want kept (not the run's)", ok, err)
+	}
+	if _, ok, err := db.SnapshotAt("https://gated.test/a", watched); err != nil || !ok {
+		t.Errorf("the watch copy survived = %v, %v; want kept", ok, err)
+	}
+	if after := spend(); after != before || after < 0.25 {
+		// RED on v0.1.30: 0 — forgetting runs reset the monthly budget
+		t.Errorf("spend after the forget = %v, want %v (the budget's ledger stays)", after, before)
+	}
+	if got := countRows(t, db, "run_snapshots"); got != 0 {
+		t.Errorf("run_snapshots rows = %d, want 0", got)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if fileHasCanary() {
+		t.Error("the gated text is still readable in the database file after the forget (want secure_delete)")
 	}
 }
