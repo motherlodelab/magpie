@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 )
@@ -58,7 +59,8 @@ func ConfigPath(client string, d Dirs) (string, error) {
 // error too (nothing creates it) — callers decide what that means.
 func Merge(path, name string, entry any) error {
 	var cfg map[string]any
-	if raw, err := os.ReadFile(path); err == nil {
+	raw, err := os.ReadFile(path)
+	if err == nil {
 		dec := json.NewDecoder(bytes.NewReader(raw))
 		// UseNumber keeps the user config's number literals verbatim on the
 		// round-trip (same rationale as scrape.go) — float64 would silently
@@ -89,8 +91,36 @@ func Merge(path, name string, entry any) error {
 		return fmt.Errorf("clients: encode %s: %w", path, err)
 	}
 	b = append(b, '\n')
+	if raw != nil {
+		if err := backupOnce(path, raw); err != nil {
+			return fmt.Errorf("clients: back up %s: %w", path, err)
+		}
+	}
 	if err := writeFileAtomic(path, b); err != nil {
 		return fmt.Errorf("clients: write %s: %w", path, err)
+	}
+	return nil
+}
+
+// backupOnce keeps the user's own config as <path>.magpie.bak (same mode)
+// before magpie's first write to it (QA §3). O_EXCL: a later merge never
+// overwrites it, so the backup is the user's file, not a magpie write.
+func backupOnce(path string, raw []byte) error {
+	perm := os.FileMode(0o600)
+	if fi, err := os.Stat(path); err == nil {
+		perm = fi.Mode().Perm()
+	}
+	f, err := os.OpenFile(path+".magpie.bak", os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if errors.Is(err, fs.ErrExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(raw)
+	if err = errors.Join(err, f.Chmod(perm), f.Close()); err != nil {
+		_ = os.Remove(f.Name()) //nolint:errcheck // a partial backup must not block the next try
+		return err
 	}
 	return nil
 }

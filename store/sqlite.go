@@ -121,6 +121,11 @@ CREATE TABLE IF NOT EXISTS facts (
 );
 `
 
+// schemaVersion is bumped only by a NON-additive change (a dropped or
+// retyped column). Additive migrations keep it, so old and new binaries
+// share a store. An old binary refuses a newer store instead of guessing.
+const schemaVersion = 1
+
 // DB is a single-writer SQLite handle.
 type DB struct {
 	db   *sql.DB
@@ -128,15 +133,24 @@ type DB struct {
 }
 
 // Open creates parent dirs, opens with WAL/foreign_keys pragmas in the DSN,
-// and applies the full DDL idempotently.
+// refuses a store a newer magpie wrote (PRAGMA user_version), and applies
+// the full DDL idempotently. The store is private (QA §3): dirs it creates
+// are 0700 and the db file 0600 — an existing dir is never chmodded (the
+// path is user-configurable, e.g. --db ~/projects/x.db).
 func Open(path string) (*DB, error) {
 	if path == "" {
 		return nil, fmt.Errorf("store: empty db path")
 	}
 	if dir := filepath.Dir(path); dir != "" {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return nil, fmt.Errorf("store: mkdir %s: %w", dir, err)
 		}
+	}
+	// Created here, not by SQLite, so a new store is 0600 from the start —
+	// SQLite gives the -wal/-shm files the db file's mode. O_EXCL: an
+	// existing store is never touched before the version check below.
+	if f, err := os.OpenFile(path, os.O_RDONLY|os.O_CREATE|os.O_EXCL, 0o600); err == nil {
+		_ = f.Close() //nolint:errcheck // empty file, nothing written
 	}
 	// QA C10: `% ? #` are URI syntax (the driver opens with SQLITE_OPEN_URI, which decodes these).
 	dsn := "file:" + strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23").Replace(path) +
@@ -146,6 +160,15 @@ func Open(path string) (*DB, error) {
 		return nil, fmt.Errorf("store: open %s: %w", path, err)
 	}
 	db.SetMaxOpenConns(1)
+	var version int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		_ = db.Close() //nolint:errcheck // error path; the read failure is the one to report
+		return nil, fmt.Errorf("store: open %s: %w", path, err)
+	}
+	if version > schemaVersion {
+		_ = db.Close() //nolint:errcheck // refusing; the version error is the one to report
+		return nil, fmt.Errorf("store: %s was written by a newer magpie (schema %d, this build reads %d) — update magpie", path, version, schemaVersion)
+	}
 	if _, err := db.Exec(ddl); err != nil {
 		if cerr := db.Close(); cerr != nil {
 			return nil, errors.Join(
@@ -164,6 +187,13 @@ func Open(path string) (*DB, error) {
 		_ = db.Close() //nolint:errcheck // error path; close failure would mask the real error
 		return nil, err
 	}
+	if version < schemaVersion {
+		if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
+			_ = db.Close() //nolint:errcheck // error path; close failure would mask the real error
+			return nil, fmt.Errorf("store: stamp schema version: %w", err)
+		}
+	}
+	_ = os.Chmod(path, 0o600) //nolint:errcheck // best effort: a store from before QA §3 may be 0644
 	return wdb, nil
 }
 

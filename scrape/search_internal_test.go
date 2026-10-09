@@ -120,6 +120,32 @@ func TestSearchBrave(t *testing.T) {
 	}
 }
 
+// QA §3 (K4): Brave's web search answers 422 for count > 20 (its documented
+// maximum), and the desktop offers 25/50 — clamp to 1..20.
+func TestSearchBrave_CountClamp(t *testing.T) {
+	var got atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got.Store(r.URL.Query().Get("count"))
+		_, _ = w.Write(fixtureBody(t, "brave.json")) //nolint:errcheck // test server
+	}))
+	t.Cleanup(srv.Close)
+	old := braveSearchURL
+	braveSearchURL = srv.URL + "/res/v1/web/search"
+	defer func() { braveSearchURL = old }()
+
+	for _, tc := range []struct {
+		limit int
+		want  string
+	}{{50, "20"}, {20, "20"}, {5, "5"}, {0, "1"}} {
+		if _, err := searchBrave(t.Context(), srv.Client(), "q", tc.limit); err != nil {
+			t.Fatalf("limit %d: %v", tc.limit, err)
+		}
+		if c, _ := got.Load().(string); c != tc.want {
+			t.Errorf("limit %d → count=%s, want %s", tc.limit, c, tc.want)
+		}
+	}
+}
+
 func TestSearchSerper(t *testing.T) {
 	serperSearchURL = "https://serper.test/search"
 	defer func() { serperSearchURL = "https://google.serper.dev/search" }()
