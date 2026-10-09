@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/go-rod/rod"
@@ -103,10 +102,19 @@ func (r *RodFetcher) ensureBrowser() error {
 	}
 	l := launcher.New()
 	// QA §4: an installed Chrome/Edge first (Windows always has Edge) — rod's
-	// download is ~150 MB, unannounced, and fails offline. Snap Chromium can't
-	// read rod's /tmp profile dir under confinement, so it is skipped.
-	if p, ok := lookPath(); ok && !strings.HasPrefix(p, "/snap/") {
+	// download is ~150 MB, unannounced, and fails offline. With neither that
+	// nor rod's downloaded copy, an embedder's consent hook (QA §3) asks
+	// instead; without one (the CLI), Launch downloads as before. Not cached:
+	// the next run checks again.
+	if p := installedBrowser(); p != "" {
 		l = l.Bin(p)
+	} else if AskBeforeDownload != nil {
+		b := launcher.NewBrowser()
+		if b.Validate() != nil {
+			AskBeforeDownload()
+			return ErrNoBrowser
+		}
+		l = l.Bin(b.BinPath()) // validated: Launch needn't validate it again
 	}
 	// Explicit opt-in for environments without a SUID/userns sandbox (CI
 	// runners, some containers) — Chrome aborts at zygote init otherwise.
