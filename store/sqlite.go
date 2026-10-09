@@ -119,6 +119,17 @@ CREATE TABLE IF NOT EXISTS facts (
     FOREIGN KEY(run_id) REFERENCES research_runs(run_id),
     FOREIGN KEY(url_hash, checked_at) REFERENCES snapshots(url_hash, checked_at)
 );
+CREATE INDEX IF NOT EXISTS idx_facts_pin ON facts(url_hash, checked_at);
+
+-- run_snapshots links a research run to every page copy it stored
+-- (RecordRunSnapshot), cited or not, so DeleteResearchRun can purge them
+-- all. No FKs: a forget deletes the snapshots and these rows together.
+CREATE TABLE IF NOT EXISTS run_snapshots (
+    run_id     TEXT NOT NULL,
+    url_hash   TEXT NOT NULL,
+    checked_at TEXT NOT NULL,
+    PRIMARY KEY (run_id, url_hash, checked_at)
+);
 `
 
 // DB is a single-writer SQLite handle.
@@ -140,7 +151,7 @@ func Open(path string) (*DB, error) {
 	}
 	// QA C10: `% ? #` are URI syntax (the driver opens with SQLITE_OPEN_URI, which decodes these).
 	dsn := "file:" + strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23").Replace(path) +
-		"?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
+		"?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=secure_delete(1)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("store: open %s: %w", path, err)
@@ -370,11 +381,12 @@ func (d *DB) GetRun(runID string) (RunInfo, error) {
 // same-second runs still sort deterministically. Feeds the desktop
 // History screen; limit <= 0 means all. Watch checks (command "watch")
 // never take a page: a check is not a run (QA ST8/C13) — GetRun still
-// reads them.
+// reads them. A forgotten research run (DeleteResearchRun's spend-only
+// tombstone) isn't listed either.
 // ponytail: the WHERE scans run_history in full (no index). Upgrade at
 // ~10^6 rows: an index on started_at, or pruning watch rows.
 func (d *DB) ListRuns(limit int) ([]RunInfo, error) {
-	q := `SELECT ` + runCols + ` FROM run_history WHERE command != 'watch' ORDER BY started_at DESC, rowid DESC`
+	q := `SELECT ` + runCols + ` FROM run_history WHERE command != 'watch' AND status != 'forgotten' ORDER BY started_at DESC, rowid DESC`
 	if limit > 0 {
 		q += fmt.Sprintf(" LIMIT %d", limit)
 	}
@@ -806,6 +818,7 @@ var tables = map[string]bool{
 	"snapshots":      true,
 	"research_runs":  true,
 	"facts":          true,
+	"run_snapshots":  true,
 	"records":        true, // created on demand by sqlite-format crawls
 }
 
