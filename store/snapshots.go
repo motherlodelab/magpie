@@ -71,6 +71,24 @@ func (d *DB) RecordSnapshot(rawURL, markdown string) (time.Time, error) {
 	return d.putSnapshot(rawURL, hash, markdown, ok && prev.ContentHash != hash, "read")
 }
 
+// RecordRunSnapshot is RecordSnapshot for a research read: the copy is also
+// linked to runID, so forgetting the run purges every page it stored —
+// cited or not (DeleteResearchRun). Research's only snapshot path.
+// ponytail: the snapshot insert and the link are two statements — a crash
+// between them leaves that one copy unlinked (it outlives a forget).
+// Upgrade: one transaction around putSnapshot + the link.
+func (d *DB) RecordRunSnapshot(runID, rawURL, markdown string) (time.Time, error) {
+	pin, err := d.RecordSnapshot(rawURL, markdown)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if _, err := d.db.Exec(`INSERT OR IGNORE INTO run_snapshots(run_id, url_hash, checked_at) VALUES(?,?,?)`,
+		runID, sha256Hex(rawURL), pin.Format(time.RFC3339Nano)); err != nil {
+		return time.Time{}, fmt.Errorf("store: link run snapshot: %w", err)
+	}
+	return pin, nil
+}
+
 // LatestSnapshot returns the newest snapshot for rawURL; (zero, false,
 // nil) on an empty history.
 func (d *DB) LatestSnapshot(rawURL string) (Snapshot, bool, error) {
