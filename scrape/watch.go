@@ -63,14 +63,18 @@ func CheckForChange(ctx context.Context, d Deps, rawURL string, o Options) (Watc
 	if ok {
 		out.OldHash = prev.ContentHash
 		if prev.ContentHash != newHash {
-			out.Changed = true
 			diff, derr := DiffWords(prev.Markdown, res.Markdown)
 			if derr != nil { // QA W1: past the diff window is still a change, and the snapshot below must become the baseline
 				diff = fmt.Sprintf("(changed — edit spans more than %d words, too large to diff)\n", maxDiffWindowWords)
 			}
-			out.Diff = diff
-			out.WordsDelta = len(strings.Fields(res.Markdown)) - len(strings.Fields(prev.Markdown))
-			out.LinksAdded, out.LinksRemoved = linkDelta(clean.MarkdownLinks(prev.Markdown), clean.MarkdownLinks(res.Markdown))
+			// QA §3: a spacing-only edit (a re-flowed <pre>) words-diffs to
+			// nothing — not a change, but still stored below as the baseline.
+			if diff != "" {
+				out.Changed = true
+				out.Diff = diff
+				out.WordsDelta = len(strings.Fields(res.Markdown)) - len(strings.Fields(prev.Markdown))
+				out.LinksAdded, out.LinksRemoved = linkDelta(clean.MarkdownLinks(prev.Markdown), clean.MarkdownLinks(res.Markdown))
+			}
 		}
 	}
 	// CheckedAt is the stored key, so the webhook below carries it too.

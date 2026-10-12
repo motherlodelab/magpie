@@ -499,8 +499,17 @@ func fetchURL(ctx context.Context, vf vertical.Fetcher, rawURL, render string, o
 	if isFile || embedded || !fetch.NeedsBrowser(score) {
 		return resp, nil
 	}
-	return fetchBrowser(ctx, rawURL, o)
+	bresp, berr := autoBrowser(ctx, rawURL, o)
+	if errors.Is(berr, fetch.ErrNoBrowser) {
+		// K8: the embedder asked before the download (AskBeforeDownload
+		// already fired); auto keeps the static page rather than failing.
+		return resp, nil
+	}
+	return bresp, berr
 }
+
+// autoBrowser is render=auto's escalation (a var: tests have no browser).
+var autoBrowser = fetchBrowser
 
 func domainOfURL(rawURL string) string {
 	u, err := url.Parse(rawURL)

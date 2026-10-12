@@ -185,6 +185,35 @@ func TestWatch_BaselineThenChange(t *testing.T) {
 	if n, err := db.TableCount("snapshots"); err != nil || n != 2 {
 		t.Errorf("snapshot rows = %d (%v), want 2", n, err)
 	}
+
+	// QA §3 (K3): an edit that only re-spaces a <pre> hashes differently but
+	// words-diffs to nothing — not a change (no empty-diff notification),
+	// yet the new snapshot is still the baseline. The one-word reprice
+	// above is the positive control.
+	spaced := func(gap string) string {
+		return strings.Replace(pricePage("20"), "</body>", "<pre>sku"+gap+"A-1</pre></body>", 1)
+	}
+	wf.set(spaced(" "))
+	if res, err = scrape.CheckForChange(context.Background(), deps, url, scrape.Options{Render: "static", Webhook: sink.srv.URL}); err != nil || !res.Changed {
+		t.Fatalf("adding the <pre> = %+v (%v), want a change", res, err)
+	}
+	wf.set(spaced("      "))
+	res, err = scrape.CheckForChange(context.Background(), deps, url, scrape.Options{Render: "static", Webhook: sink.srv.URL})
+	if err != nil {
+		t.Fatalf("whitespace check: %v", err)
+	}
+	if res.OldHash == res.NewHash {
+		t.Fatalf("vacuous: the spacing edit didn't reach the markdown (hash %s both times)", res.NewHash)
+	}
+	if res.Changed || res.Diff != "" || res.WebhookStatus != "" {
+		t.Errorf("whitespace-only edit = changed %v, diff %q, webhook %q; want no change", res.Changed, res.Diff, res.WebhookStatus)
+	}
+	if n := len(sink.posts()); n != 2 {
+		t.Errorf("webhook POSTs = %d, want 2 (the reprice and the <pre>, not the re-spacing)", n)
+	}
+	if latest, ok, err := db.LatestWatchSnapshot(url); err != nil || !ok || latest.ContentHash != res.NewHash {
+		t.Errorf("latest snapshot hash = %s (%v, %v), want the re-spaced page %s as the baseline", latest.ContentHash, ok, err, res.NewHash)
+	}
 }
 
 // TestWatch_WebhookFailureNotFatal: a dead or 500ing sink never fails

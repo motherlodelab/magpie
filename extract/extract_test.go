@@ -322,6 +322,17 @@ func TestCostFor_Unpriced(t *testing.T) {
 			t.Errorf("CostFor(%s, %s) = %v, want 0", pm[0], pm[1], c)
 		}
 	}
+	// S4-core K9: a llama… name is free only on a keyless provider (ollama,
+	// settled above). On a metered one (an OpenAI-compatible host serving
+	// llama-3.3-70b) it booked 0, so no cap or budget ever tripped.
+	for _, pm := range [][2]string{{"openai", "llama-3.3-70b-versatile"}, {"openrouter", "ollama/llama3"}} {
+		if c := extract.CostFor(pm[0], pm[1], u); c != 3 {
+			t.Errorf("CostFor(%s, %s) = %v, want the 3.00 fallback", pm[0], pm[1], c)
+		}
+	}
+	if c := extract.CostFor("ollama", "llama3.1", u); c != 0 {
+		t.Errorf("CostFor(ollama, llama3.1) = %v, want 0 (local)", c)
+	}
 	if c := extract.CostFor("openrouter", "x/y", extract.TokenUsage{PromptTokens: 10, USDEstimate: 0.42}); c != 0.42 {
 		t.Errorf("reported cost = %v, want 0.42 (provider-reported wins)", c)
 	}

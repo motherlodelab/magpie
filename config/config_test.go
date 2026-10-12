@@ -254,6 +254,12 @@ func TestSaveCreatesMissing(t *testing.T) {
 	if cfg.ExtractProvider != "openai" {
 		t.Errorf("Load round-trip provider = %q, want openai", cfg.ExtractProvider)
 	}
+	// QA §3 (K2): the config dir holds API keys — a dir Save creates is private.
+	if runtime.GOOS != "windows" {
+		if fi, err := os.Stat(filepath.Dir(path)); err != nil || fi.Mode().Perm() != 0o700 {
+			t.Errorf("created config dir mode = %v (%v), want 0700", fi.Mode().Perm(), err)
+		}
+	}
 }
 
 // TestSaveMutateErrorLeavesFile: a mutate error aborts before any
@@ -459,5 +465,21 @@ func TestDefaultDBPath_LegacyWins(t *testing.T) {
 	}
 	if got := config.DefaultDBPath(); got != legacy {
 		t.Fatalf("DefaultDBPath() = %s, want the existing store %s", got, legacy)
+	}
+}
+
+// The desktop's legacy-store hint (S4 BR5) compares the open store with
+// both locations: the pre-v0.1.30 cache path and the data-dir path a new
+// install gets. DefaultDBPath still picks between them (LegacyWins above).
+func TestLegacyAndDataDBPath(t *testing.T) {
+	root := dbPathEnv(t)
+	if got, want := config.LegacyDBPath(), filepath.Join(root, "cache", "magpie", "cache.db"); got != want {
+		t.Errorf("LegacyDBPath() = %s, want %s (XDG_CACHE_HOME)", got, want)
+	}
+	if got := config.DataDBPath(); got == "" || got != config.DefaultDBPath() {
+		t.Errorf("DataDBPath() = %q, want the new-install path %s", got, config.DefaultDBPath())
+	}
+	if got := config.DataDBPath(); strings.HasPrefix(got, filepath.Join(root, "cache")) {
+		t.Errorf("DataDBPath() = %s is under the cache dir", got)
 	}
 }

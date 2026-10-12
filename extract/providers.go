@@ -94,8 +94,16 @@ func BuildExtractor(provider, apiKey, model, sessionID string, sch *Schema,
 	// casing must never fork the accounting.
 	provider = strings.ToLower(provider)
 	switch provider {
-	case "openai", "ollama":
+	case "openai":
 		a := NewOpenAI("", apiKey, model, sch)
+		a.Log = log
+		return a, nil
+	case "ollama":
+		// The local daemon's OpenAI-compatible endpoint. Without it the
+		// adapter's api.openai.com default received the page text.
+		// ponytail: OLLAMA_HOST isn't read; a remote daemon sets
+		// MAGPIE_BASE_URL (NewOpenAI's override) until a user asks.
+		a := NewOpenAI("http://127.0.0.1:11434/v1", apiKey, model, sch)
 		a.Log = log
 		return a, nil
 	case "anthropic":

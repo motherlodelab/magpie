@@ -245,7 +245,8 @@ func searchPostRequest(ctx context.Context, endpoint string, body map[string]any
 }
 
 func searchBrave(ctx context.Context, c *http.Client, query string, limit int) ([]SearchHit, error) {
-	req, err := searchRequest(ctx, http.MethodGet, braveSearchURL, queryKey{"q", query}, queryKey{"count", fmt.Sprintf("%d", max(limit, 1))})
+	// Brave's documented maximum count is 20; more is an HTTP 422 (QA §3).
+	req, err := searchRequest(ctx, http.MethodGet, braveSearchURL, queryKey{"q", query}, queryKey{"count", fmt.Sprintf("%d", min(max(limit, 1), 20))})
 	if err != nil {
 		return nil, err
 	}

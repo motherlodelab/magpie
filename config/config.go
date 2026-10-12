@@ -71,18 +71,28 @@ func DefaultConfigPath() string {
 // races the CLI and loses WAL/records on a cross-volume rename); a new
 // install gets the OS's data dir, which cache cleaners leave alone.
 func DefaultDBPath() string {
-	legacy := legacyDBPath()
+	legacy := LegacyDBPath()
 	if _, err := os.Stat(legacy); err == nil {
 		return legacy
 	}
-	if d := dataDir(); d != "" {
-		return filepath.Join(d, "magpie", "cache.db")
+	if d := DataDBPath(); d != "" {
+		return d
 	}
 	return legacy
 }
 
-// legacyDBPath is the pre-v0.1.30 location on every OS.
-func legacyDBPath() string {
+// DataDBPath is where a new install's store goes ("" when the OS data dir
+// is unknown). With LegacyDBPath, it lets an embedder tell a user whose
+// store still sits in the cache dir where to move it.
+func DataDBPath() string {
+	if d := dataDir(); d != "" {
+		return filepath.Join(d, "magpie", "cache.db")
+	}
+	return ""
+}
+
+// LegacyDBPath is the pre-v0.1.30 location on every OS.
+func LegacyDBPath() string {
 	if v := os.Getenv("XDG_CACHE_HOME"); v != "" {
 		return filepath.Join(v, "magpie", "cache.db")
 	}
@@ -203,7 +213,7 @@ func Save(path string, mutate func(*Config) error) error {
 	if err != nil {
 		return fmt.Errorf("config: encode %s: %w", path, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil { // QA §3: it holds keys; an existing dir keeps its mode
 		return fmt.Errorf("config: mkdir %s: %w", filepath.Dir(path), err)
 	}
 	// QA ST4: atomic; 0600 only applies to fresh files (existing modes are

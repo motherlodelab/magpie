@@ -43,8 +43,13 @@ func CostFor(provider, model string, u TokenUsage) float64 {
 	if IsFlatRateProvider(provider) || !NeedsAPIKey(provider) {
 		return 0
 	}
-	if c, known := costLookup(model, u.PromptTokens, u.CompletionTokens); known {
-		return c
+	if p, ok := priceTable[model]; ok {
+		return float64(u.PromptTokens)/1e6*p[0] + float64(u.CompletionTokens)/1e6*p[1]
+	}
+	// K9: only OpenRouter's free tier is free on a metered provider; a
+	// llama…/ollama/… name is free only on a keyless one (settled above).
+	if strings.HasSuffix(strings.ToLower(model), ":free") {
+		return 0
 	}
 	// QA R1: booking 0 let an unpriced model spend past every cap and budget.
 	// ponytail: $2 in / $10 out per 1M (~0.9× gpt-4o, ~0.67× claude-sonnet-4-5)

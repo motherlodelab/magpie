@@ -50,6 +50,11 @@ func TestBuildExtractor_ConstructsPerProvider(t *testing.T) {
 			if oa.Log == nil {
 				t.Errorf("%s: Log not attached — llm_calls rows would be lost", name)
 			}
+			// ollama is the local daemon: its prompts (page text) must
+			// never go to api.openai.com, the OpenAI adapter's default.
+			if name == "ollama" && oa.BaseURL != "http://127.0.0.1:11434/v1" {
+				t.Errorf("ollama baseURL = %q, want the local daemon", oa.BaseURL)
+			}
 			if name == "openrouter" {
 				if oa.BaseURL != "https://openrouter.ai/api/v1" {
 					t.Errorf("openrouter baseURL = %q", oa.BaseURL)

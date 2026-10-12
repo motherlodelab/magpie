@@ -545,7 +545,7 @@ keyring > config file.
 | Provider | Auth | Billing | Notes |
 | :-- | :-- | :-- | :-- |
 | `anthropic`, `openai` | API key | Metered, price table | Native structured output |
-| `ollama` | none (local) | Free | Base-URL switch on the OpenAI adapter |
+| `ollama` | none (local) | Free | The OpenAI adapter pointed at the local daemon, `http://127.0.0.1:11434/v1`; `MAGPIE_BASE_URL` for a remote one |
 | `openrouter` | `MAGPIE_OPENROUTER_API_KEY` | Metered, costed from `usage.cost` | Sends `provider.require_parameters` + Referer/Title so the schema is enforced, not a hint |
 | `codex` | none — uses your logged-in Codex CLI | Your subscription | Shells out to `codex exec` (`--output-schema --ephemeral --ignore-user-config`); needs a current CLI, no API key, exempt from `--max-cost` |
 | `opencode-go` | `MAGPIE_OPENCODE_GO_API_KEY` | Flat plan, exempt from `--max-cost` | Flat-plan traffic is monitored for abuse — extraction is tiny, but if in doubt use Zen |
