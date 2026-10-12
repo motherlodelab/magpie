@@ -273,68 +273,73 @@ func (d *DB) CrawlURLs(runID string) ([]CrawlURL, error) {
 }
 
 // DeleteResearchRun forgets a research run and the stored trail it is
-// responsible for (DR6.1, the legal (b) condition): its facts, the
-// snapshots only its facts cited, its read ledger (crawl_state — every URL
-// the run read, gated reads included — and its dedup marks), its spend
-// rows, its research_runs row and its run_history entry. A snapshot
-// another run's fact still cites survives (the cite-join); watch/scrape
-// snapshots are never fact-cited, so they are structurally out of reach.
-// Returns the number of snapshots deleted — the receipt the UI shows.
+// responsible for (DR6.1, the legal (b) condition): its facts, EVERY page
+// copy it stored (run_snapshots, cited or not, plus the copies its facts
+// cite — runs from before the link table have only those), its read ledger
+// (crawl_state — every URL the run read, gated reads included — and its
+// dedup marks), its links and its research_runs row. A copy another run's
+// fact still cites survives (the cite-join); watch and scrape copies are
+// never linked or cited, so they are out of reach. Returns the number of
+// page copies deleted — the receipt the UI shows.
 //
-// ponytail: ordered Execs on the single-writer handle, no transaction — a
-// crash mid-way leaves at most uncited orphan snapshots (extra retention,
-// never corruption; FKs cannot dangle in this order). Wrap in a tx when a
-// second caller needs atomicity.
+// Spend is kept (core v0.1.31): llm_calls are the monthly budget's ledger
+// and hold no page text, so the run_history row stays as a spend-only
+// tombstone (status 'forgotten', proxy and error text blanked) that
+// ListRuns hides. One transaction: a failure part-way rolls everything
+// back, so a retry still finds every copy. The store opens with
+// secure_delete, so the deleted text is zeroed in the file, not just
+// unlinked.
 func (d *DB) DeleteResearchRun(runID string) (int64, error) {
-	// Existence guard first: everything below would otherwise half-apply to
-	// a non-research run id (llm_calls FKs run_history, not research_runs).
-	// GetResearchRun owns the store's one not-found phrasing; its errors pass
-	// through unwrapped (wrapping would double the store: prefix).
+	// Existence guard first: GetResearchRun owns the store's one not-found
+	// phrasing; its errors pass through unwrapped (wrapping would double
+	// the store: prefix).
 	if _, err := d.GetResearchRun(runID); err != nil {
 		return 0, err
 	}
-	// The pins must be captured before the facts go — they are the cite-join's
-	// input. Facts closes its rows before returning: with the one-connection
-	// pool, the Execs below must not race an open query.
-	facts, err := d.Facts(runID)
+	tx, err := d.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("store: forget run: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() //nolint:errcheck // a no-op after Commit
+	exec := func(q string, args ...any) (sql.Result, error) {
+		res, err := tx.Exec(q, args...)
+		if err != nil {
+			return nil, fmt.Errorf("store: forget run: %w", err)
+		}
+		return res, nil
+	}
+	// The cited copies join the links before the facts go (a pre-link run
+	// has nothing else); then every linked copy no other fact cites goes.
+	if _, err := exec(`INSERT OR IGNORE INTO run_snapshots(run_id, url_hash, checked_at)
+		SELECT run_id, url_hash, checked_at FROM facts WHERE run_id=?`, runID); err != nil {
+		return 0, err
+	}
+	if _, err := exec(`DELETE FROM facts WHERE run_id=?`, runID); err != nil {
+		return 0, err
+	}
+	res, err := exec(`DELETE FROM snapshots WHERE (url_hash, checked_at) IN
+		(SELECT url_hash, checked_at FROM run_snapshots WHERE run_id=?)
+		AND NOT EXISTS (SELECT 1 FROM facts f WHERE f.url_hash=snapshots.url_hash AND f.checked_at=snapshots.checked_at)`, runID)
 	if err != nil {
 		return 0, err
 	}
-	if _, err := d.db.Exec(`DELETE FROM facts WHERE run_id=?`, runID); err != nil {
+	deleted, err := res.RowsAffected()
+	if err != nil {
 		return 0, fmt.Errorf("store: forget run: %w", err)
 	}
-	var deleted int64
-	for _, f := range facts {
-		h, at := sha256Hex(f.URL), f.CheckedAt.UTC().Format(time.RFC3339Nano)
-		res, err := d.db.Exec(`DELETE FROM snapshots WHERE url_hash=? AND checked_at=?
-			AND NOT EXISTS (SELECT 1 FROM facts WHERE url_hash=? AND checked_at=?)`,
-			h, at, h, at)
-		if err != nil {
-			return deleted, fmt.Errorf("store: forget run: %w", err)
+	for _, q := range []string{
+		`DELETE FROM run_snapshots WHERE run_id=?`,
+		`DELETE FROM crawl_state WHERE run_id=?`,
+		`DELETE FROM dedup WHERE run_id=?`,
+		`DELETE FROM research_runs WHERE run_id=?`,
+		`UPDATE run_history SET status='forgotten', proxy='', error_kind='', error_msg='' WHERE run_id=?`,
+	} {
+		if _, err := exec(q, runID); err != nil {
+			return 0, err
 		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			return deleted, fmt.Errorf("store: forget run: %w", err)
-		}
-		deleted += n
 	}
-	// The read ledger and its dedup marks go with the run — no FKs on either,
-	// so position is free; without this the URLs the run read (gated reads
-	// included) would outlive it.
-	if _, err := d.db.Exec(`DELETE FROM crawl_state WHERE run_id=?`, runID); err != nil {
-		return deleted, fmt.Errorf("store: forget run: %w", err)
-	}
-	if _, err := d.db.Exec(`DELETE FROM dedup WHERE run_id=?`, runID); err != nil {
-		return deleted, fmt.Errorf("store: forget run: %w", err)
-	}
-	if _, err := d.db.Exec(`DELETE FROM llm_calls WHERE run_id=?`, runID); err != nil {
-		return deleted, fmt.Errorf("store: forget run: %w", err)
-	}
-	if _, err := d.db.Exec(`DELETE FROM research_runs WHERE run_id=?`, runID); err != nil {
-		return deleted, fmt.Errorf("store: forget run: %w", err)
-	}
-	if _, err := d.db.Exec(`DELETE FROM run_history WHERE run_id=?`, runID); err != nil {
-		return deleted, fmt.Errorf("store: forget run: %w", err)
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("store: forget run: %w", err)
 	}
 	return deleted, nil
 }

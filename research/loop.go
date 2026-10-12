@@ -258,7 +258,7 @@ func (r *run) read(ctx context.Context, a Angle, u, target string) (int, []task,
 		r.emit(Event{Stage: "unreadable", URL: u, Issue: issue, Detail: err.Error(), Session: rt.authed})
 		return 0, nil, nil
 	}
-	pin, err := r.d.DB.RecordSnapshot(u, res.Markdown)
+	pin, err := r.d.DB.RecordRunSnapshot(r.id, u, res.Markdown) // linked: Forget purges every copy the run stored
 	if err != nil {
 		return 0, nil, err
 	}
