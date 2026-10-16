@@ -404,12 +404,17 @@ func runAction(ctx context.Context, page *rod.Page, a Action) error {
 		}
 		return el.Input(a.Text)
 	case "scroll":
+		// rod's Eval wraps the expression as `(expr).apply(this, arguments)`,
+		// so every Eval argument must BE a function expression — a bare
+		// statement like `window.scrollTo(0, 0)` evaluates to undefined and
+		// dies with "Cannot read properties of undefined (reading 'apply')"
+		// on every page. The pixel branch already had the right shape.
 		switch a.Text {
 		case "top":
-			_, err := page.Eval("window.scrollTo(0, 0)")
+			_, err := page.Eval("() => window.scrollTo(0, 0)")
 			return err
 		case "bottom":
-			_, err := page.Eval("window.scrollTo(0, document.body.scrollHeight)")
+			_, err := page.Eval("() => window.scrollTo(0, document.body.scrollHeight)")
 			return err
 		default:
 			_, err := page.Eval("n => window.scrollBy(0, n)", a.Ms)
@@ -427,7 +432,10 @@ func runAction(ctx context.Context, page *rod.Page, a Action) error {
 		}
 		return os.WriteFile(a.Text, png, 0o644)
 	case "eval-js":
-		_, err := page.Eval(a.Text) // result discarded; arbitrary JS is inherent to the verb (documented)
+		// Result discarded; the text must still be a function expression —
+		// same rod contract as scroll above. Documented in README's actions
+		// table.
+		_, err := page.Eval(a.Text)
 		return err
 	default:
 		return fmt.Errorf("unknown verb %q", a.Verb)

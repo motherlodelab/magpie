@@ -141,3 +141,50 @@ func TestRod_RunHeadersReachBrowserPath(t *testing.T) {
 		}
 	}
 }
+
+// TestScrollAndEvalJS_Verbs: scroll top/bottom/pixels and a statement-style
+// eval-js all execute without rod's "reading 'apply'" TypeError. Regression
+// pin for the rod Eval contract: Eval runs `(expr).apply(this, arguments)`,
+// so every action expression must BE a function — bare statements used to
+// crash scroll top/bottom on every page (found live on an infinite-scroll
+// sandbox, 2026-10-16). Effects are proven through the rendered DOM: a
+// trailing eval-js stamps the post-scroll scrollY into a data attribute.
+func TestScrollAndEvalJS_Verbs(t *testing.T) {
+	page := htmlPage(t, `<html><head><title>scroll</title></head><body style="margin:0">
+		<div style="height:5000px">tall body so the page can scroll</div>
+	</body></html>`)
+
+	r := fetch.NewRodFetcher()
+	defer r.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	acts, err := fetch.ParseActions([]string{
+		"scroll bottom",
+		"eval-js () => { document.body.dataset.probe = 'bottom-' + window.scrollY }",
+		"scroll top",
+		"eval-js () => { document.body.dataset.probe += '-top-' + window.scrollY }",
+		"scroll 600",
+		"eval-js () => { document.body.dataset.probe += '-px-' + window.scrollY }",
+	})
+	if err != nil {
+		t.Fatalf("ParseActions: %v", err)
+	}
+	res, err := r.FetchWithActions(ctx, fetch.FetchRequest{URL: page}, acts)
+	if err != nil {
+		if strings.Contains(err.Error(), "launch browser") || strings.Contains(err.Error(), "connect browser") {
+			t.Skipf("no browser available: %v", err)
+		}
+		t.Fatalf("FetchWithActions: %v", err)
+	}
+	body := string(res.HTML)
+	// bottom = min(5000 + margins, viewport) — any non-zero value proves
+	// the scrollTo reached the bottom; 0 after scroll top; ~600 after pixels.
+	for _, want := range []string{`data-probe="bottom-`, "-top-0", "-px-600"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("rendered DOM missing %q; probe: %s", want, body)
+		}
+	}
+	if strings.Contains(body, `data-probe="bottom-0`) {
+		t.Errorf("scroll bottom left scrollY at 0 — scrollTo never ran: %s", body)
+	}
+}

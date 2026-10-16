@@ -271,7 +271,7 @@ the verb and line number, before any I/O.
 | `wait` | `wait 1200` | Fixed pause (≤ 30000 ms) |
 | `wait-for` | `wait-for .row:nth-of-type(30)` | Auto-wait until the selector exists (bounded by the fetch budget) |
 | `screenshot` | `screenshot /tmp/shot.png` | Viewport PNG mid-flow (**CLI-only** — rejected on MCP `scrape_url`) |
-| `eval-js` | `eval-js window.scrollTo(0, document.body.scrollHeight)` | Run arbitrary JS, result discarded |
+| `eval-js` | `eval-js () => { window.scrollTo(0, document.body.scrollHeight) }` | Run arbitrary JS, result discarded. The text must be a **function expression** — rod calls it via `.apply`, so a bare statement (`window.scrollTo(0, 500)`) fails with a TypeError |
 
 ```bash
 magpie scrape https://example.com/list --action 'click .load-more' \
