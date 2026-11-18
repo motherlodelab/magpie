@@ -68,7 +68,10 @@ func TestDiffRecords_JSONShape(t *testing.T) {
 	if changed == nil || changed.Change != "changed" || len(changed.Fields) != 1 ||
 		changed.Fields[0].Path != "price" || changed.Fields[0].Old != "19.99" ||
 		changed.Fields[0].New != "17.99" {
-		b, _ := json.Marshal(res.Rows)
+		b, merr := json.Marshal(res.Rows)
+		if merr != nil {
+			t.Fatal(merr)
+		}
 		t.Fatalf("changed row: %s", b)
 	}
 }

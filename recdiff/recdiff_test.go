@@ -74,7 +74,10 @@ func TestFixturePair(t *testing.T) {
 	want := Row{Key: "sku-2", Change: "changed", Fields: []FieldChange{
 		{Path: "price", Old: "19.99", New: "17.99"},
 	}}
-	b, _ := json.Marshal(res.Rows[1])
+	b, merr := json.Marshal(res.Rows[1])
+	if merr != nil {
+		t.Fatal(merr)
+	}
 	var got Row
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatal(err)

@@ -153,30 +153,40 @@ func runRecordDiff(prevPath, curPath string, o recdiff.Options, format string, o
 		if err != nil {
 			return fmt.Errorf("diff: marshal: %w", err)
 		}
-		fmt.Fprintln(out, string(b))
+		if _, err := fmt.Fprintln(out, string(b)); err != nil {
+			return fmt.Errorf("diff: write: %w", err)
+		}
 		return nil
 	}
 	if res.NoKey > 0 {
-		fmt.Fprintf(errW, "! %d records had no key\n", res.NoKey)
+		if _, err := fmt.Fprintf(errW, "! %d records had no key\n", res.NoKey); err != nil {
+			return fmt.Errorf("diff: write: %w", err)
+		}
 	}
 	if res.DupKeys > 0 {
-		fmt.Fprintf(errW, "! %d duplicate keys (last occurrence wins)\n", res.DupKeys)
+		if _, err := fmt.Fprintf(errW, "! %d duplicate keys (last occurrence wins)\n", res.DupKeys); err != nil {
+			return fmt.Errorf("diff: write: %w", err)
+		}
 	}
+	var b strings.Builder
 	for _, r := range res.Rows {
 		switch r.Change {
 		case "added":
-			fmt.Fprintf(out, "+ %s\n", r.Key)
+			fmt.Fprintf(&b, "+ %s\n", r.Key)
 		case "gone":
-			fmt.Fprintf(out, "- %s\n", r.Key)
+			fmt.Fprintf(&b, "- %s\n", r.Key)
 		case "changed":
 			for _, fc := range r.Fields {
 				if fc.Long {
-					fmt.Fprintf(out, "~ %s %s: (long field, hash differs)\n", r.Key, fc.Path)
+					fmt.Fprintf(&b, "~ %s %s: (long field, hash differs)\n", r.Key, fc.Path)
 					continue
 				}
-				fmt.Fprintf(out, "~ %s %s: %s → %s\n", r.Key, fc.Path, fc.Old, fc.New)
+				fmt.Fprintf(&b, "~ %s %s: %s → %s\n", r.Key, fc.Path, fc.Old, fc.New)
 			}
 		}
+	}
+	if _, err := io.WriteString(out, b.String()); err != nil {
+		return fmt.Errorf("diff: write: %w", err)
 	}
 	return nil
 }
